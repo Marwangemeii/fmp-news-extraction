@@ -18,7 +18,17 @@ Template for each site:
 
 ## 1. TechCrunch
 - **Start URLs:** https://techcrunch.com/feed/
-- **Notes:** a WordPress feed; WordPress feeds often support `?paged=2`, `?paged=3`, … **(hypothesis)**
+- **Discovery route:** RSS 2.0 feed, 20 items per page (observed 2026-11-21). Items have `title`, `link`, `pubDate`, `description`, and **no** `content:encoded` and no image, so image and fullText come from the article page.
+- **Covering 14 days:** WordPress feeds often support `?paged=2`, `?paged=3`, … **(hypothesis, Phase 2)**. Page 1 covered about 1 day on 2026-11-21.
+- **Fetcher:** http for both. The feed and article pages return 200 with a Chrome User-Agent.
+- **Selectors:**
+  - title `h1` (`h1.article-hero__title`; og:title has a ` | TechCrunch` suffix)
+  - body `.entry-content`, with paragraphs as `p.wp-block-paragraph`
+  - date: `meta[property="article:published_time"]` (e.g. `2026-11-21T04:00:00+00:00`), which matches the feed `pubDate`
+  - image: `og:image`
+  - canonical: `<link rel="canonical">`, which equals the feed link
+- **Clean-up:** removed from the body: `.ad-unit`, `.wp-block-techcrunch-card` (related-article cards), `.jw-player-inline-promo`, `.wp-block-tc23-post-relevant-terms`, `.wp-block-techcrunch-social-share`, `.wp-block-techcrunch-post-authors`. Spot-checked on 2 of 5 articles: no menus, ads or cards left.
+- **Blocking log:** none, no blocking seen.
 
 ## 2. GlobeNewswire
 - **Start URLs:** `/en/search/date/24HOURS?pageSize=10&page=1`, `/en/search/subject/prs`

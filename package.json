@@ -1,0 +1,19 @@
+{
+  "name": "fmp-news-extraction",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Collects 14 days of articles from 10 financial news publishers, labels them, and writes articles.jsonl.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/run.js",
+    "test": "node --test \"test/*.test.js\"",
+    "validate": "node scripts/validate.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "fast-xml-parser": "^5.12.1"
+  }
+}

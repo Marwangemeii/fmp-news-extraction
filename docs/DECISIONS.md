@@ -114,6 +114,45 @@ Fetched article HTML is cached on disk (`.cache/`, gitignored) when `CACHE=1`, t
 `learning/` holds Marwan's notes: a glossary plus one note per session, written by Claude Code. It's gitignored, so it's not part of the submission.
 **Why:** Marwan must understand, defend and modify every part live; the notes are his study material.
 
+### D19. Schema defaults + extractor default selectors
+- `src/publishers.js` has a `DEFAULTS` object (`enabled: false`, `fetcher: { list: 'http', article: 'http' }`, `extract: 'html'`, `label: 'placeholder'`, `delayMs: 1000`, `defaultType`, `selectors: {}`), shallow-merged into every entry.
+- `src/blocks/extract-html.js` has `DEFAULT_SELECTORS` built on standard tags (`link[rel=canonical]`, `og:title`, `og:image`, `article:published_time`, `article`). An entry's `selectors` override any of them.
+- A selector is a CSS string (use the element's text) or `{ css, attr }` (use an attribute).
+
+**Why:** R-C2 says each entry holds only what differs. Without defaults, all 10 entries would repeat the same fetcher, labeller and meta selectors. Phase 3 swaps the labeller in one place.
+**Considered:** fully explicit entries, which are clearer one by one but repetitive and easy to get out of sync; a deep merge, which isn't needed while the nested objects are small.
+
+### D20. `--only` is matched in `run.js`, not in the controller
+**Why:** the controller must never compare a publisher name (R-C4). Filtering the list before handing it over keeps the controller fully generic.
+**Considered:** an `only` option inside the controller, which would need a `name ===` check in it.
+
+### D21. A failed article is still written, from list data, with `fullText: null` (temporary)
+If an article page still fails after the fetcher's retries, the record is built from the feed item (title, date, description), `fullText` is `null`, the error is logged, and the validator reports a **warning** (R-A9).
+**Why:** losing the article silently is worse than a visible null. Phase 4 replaces this with the blocking ladder (D13).
+**Considered:** skipping the article, which loses data with no trace in the output.
+
+### D22. The validator takes the run time from the output file
+The window is computed from the modification time of `output/articles.jsonl`, overridable with `--run-at <iso>`.
+**Why:** validating hours after a run must not shift the window start and wrongly fail older articles.
+**Considered:** a separate `output/run.json`, which means one more output file for one value.
+
+### D23. `defaultType` per entry, placeholder until Phase 3
+Every record gets `type: entry.defaultType` (default `general`).
+**Why:** R-A11 needs a valid value now. Phase 3 settles the real rule (see the open question below); a per-publisher default is likely to stay as the fallback.
+
+### D24. No `cleanups` registry slot yet
+Phase 1 handles noise with declarative `remove` selectors. A `cleanups` registry group is added in Phase 2, when the first real clean-up function exists.
+**Why:** don't build an empty extension point.
+
+### D25. The R-C4 structure test scans all of `src/` except the schema
+`test/structure.test.js` checks every `.js` file under `src/` except `src/publishers.js` (controller, `run.js`, `blocks/`, `lib/`). It fails on:
+- any publisher name or domain (comments included), or
+- any comparison on an entry's `name` or `site`, in either direction (`x.name === …`, `x.site.toLowerCase() !== …`, `… === x.name`).
+
+**One allowed exception:** the `--only` line in `src/run.js` (D20), which compares schema names against **user input from the CLI** (`values.only`). Comparing against user input is fine; comparing against a hardcoded name is not. The exception is a single named rule in the test (`run.js` + `values.only`), not a general allowlist.
+**Why:** per-site logic must live only in the schema. Checking only the controller would let a site-specific `if` hide in a building block or a helper.
+**Considered:** scanning only `controller.js`, which is the R-C4 wording but too narrow for the intent of R-C1/R-C5.
+
 ---
 
 ## Open questions (decide in the phase noted)
