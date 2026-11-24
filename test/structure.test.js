@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { publishers } from '../src/publishers.js';
 import { registry } from '../src/blocks/index.js';
+import { toSources } from '../src/lib/paging.js';
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const SCHEMA = 'publishers.js';
@@ -84,7 +85,8 @@ test('every entry has a bare site and https start URLs', () => {
     assert.match(p.site, /^[a-z0-9.-]+\.[a-z]+$/, `${p.name}: site "${p.site}"`);
     assert.ok(!p.site.startsWith('www.'), `${p.name}: site must not start with www.`);
     assert.ok(Array.isArray(p.startUrls) && p.startUrls.length > 0, `${p.name}: no startUrls`);
-    for (const url of p.startUrls) assert.match(url, /^https:\/\//, `${p.name}: ${url}`);
+    // A startUrls item is a string or { url, discover, paging } (D30).
+    for (const { url } of toSources(p)) assert.match(url, /^https:\/\//, `${p.name}: ${url}`);
     assert.equal(typeof p.enabled, 'boolean', `${p.name}: enabled must be true/false`);
   }
 });
@@ -94,7 +96,7 @@ test('every enabled entry names building blocks that exist in the registry', () 
     const uses = [
       ['fetchers', p.fetcher?.list],
       ['fetchers', p.fetcher?.article],
-      ['discoverers', p.discover],
+      ...toSources(p).map((s) => ['discoverers', s.discover]), // each source's discoverer
       ['extractors', p.extract],
       ['labellers', p.label],
     ];

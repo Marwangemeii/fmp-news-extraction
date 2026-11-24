@@ -3,3 +3,7 @@ node_modules/
 .cache/
 output/traces.jsonl
 learning/
+.vscode/
+# Run outputs: committed once, in Phase 7 (final run)
+output/articles.jsonl
+output/stats.json

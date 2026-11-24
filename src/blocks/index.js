@@ -5,12 +5,13 @@
  */
 import { fetchHttp } from './fetch-http.js';
 import { discoverRss } from './discover-rss.js';
+import { discoverWpJson } from './discover-wp-json.js';
 import { extractHtml } from './extract-html.js';
 import { labelPlaceholder } from './label-placeholder.js';
 
 export const registry = {
   fetchers: { http: fetchHttp },
-  discoverers: { rss: discoverRss },
+  discoverers: { rss: discoverRss, 'wp-json': discoverWpJson },
   extractors: { html: extractHtml },
   labellers: { placeholder: labelPlaceholder },
 };

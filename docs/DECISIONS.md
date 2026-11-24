@@ -131,7 +131,7 @@ If an article page still fails after the fetcher's retries, the record is built 
 **Why:** losing the article silently is worse than a visible null. Phase 4 replaces this with the blocking ladder (D13).
 **Considered:** skipping the article, which loses data with no trace in the output.
 
-### D22. The validator takes the run time from the output file
+### D22. The validator takes the run time from the output file (replaced by D26)
 The window is computed from the modification time of `output/articles.jsonl`, overridable with `--run-at <iso>`.
 **Why:** validating hours after a run must not shift the window start and wrongly fail older articles.
 **Considered:** a separate `output/run.json`, which means one more output file for one value.
@@ -152,6 +152,53 @@ Phase 1 handles noise with declarative `remove` selectors. A `cleanups` registry
 **One allowed exception:** the `--only` line in `src/run.js` (D20), which compares schema names against **user input from the CLI** (`values.only`). Comparing against user input is fine; comparing against a hardcoded name is not. The exception is a single named rule in the test (`run.js` + `values.only`), not a general allowlist.
 **Why:** per-site logic must live only in the schema. Checking only the controller would let a site-specific `if` hide in a building block or a helper.
 **Considered:** scanning only `controller.js`, which is the R-C4 wording but too narrow for the intent of R-C1/R-C5.
+
+### D26. The validator takes the run time from `output/stats.json` (replaces D22)
+`run.js` writes `runAt` (the window's end) to `output/stats.json` in the same run as `articles.jsonl`. The validator reads it from there; `--run-at <iso>` still overrides. It also cross-checks the file: a publisher's `written` in stats must equal its row count in `articles.jsonl` (failure), and an enabled publisher with `windowStartReached: false`, or a `--limit` run, gives an R-D3 warning.
+**Why:** a file's modification time changes when the file is copied, checked out or touched, so it's a fragile source for the run time. `stats.json` was needed anyway (D16).
+**Considered:** keeping the mtime (D22); a separate `run.json` (one more file for one value).
+
+### D27. CryptoPotato: the given feed is kept, and the WordPress REST API is added for paging back
+The feed (`/feed`) ignores `?paged=N`: pages 2 and 3 are byte-identical to page 1 (36 items, ~2 days). A cache-busting param (`?paged=3&x=1`) got a **429 Cloudflare challenge**. The site's WordPress REST API (`/wp-json/wp/v2/posts?per_page=100&page=N`) pages correctly with dates, so it's a second source. The feed stays a source, with no query params added (R-D2: discovery starts from the URLs FMP gave us).
+**Why:** R-D2 + R-D3. The REST API is JSON with `link`, `date_gmt`, `title`, `excerpt`: 3 pages cover 14 days.
+**Considered:** HTML archive pages (`/page/N/`), which need list selectors and have no machine-readable dates; the Yoast sitemap, which has only `lastmod` (modified date, not published date).
+
+### D28. Paging back: config in the schema, stop logic generic
+A source's `paging: { param, maxPages }` says which query parameter holds the page number. `src/lib/paging.js` `discoverPages()` fetches page 1 (the URL as written), 2, 3… and stops on the first of: **window start reached** (the oldest item so far is older than `window.start`), **empty page**, **no new items** (every URL already seen on an earlier page: the site ignores the param), **page error** (page 2+ failed after retries; page 1 failing fails the publisher), or **max pages**. Each source's pages, stop reason and oldest date go to `stats.json`.
+**Why:** R-D3, and R-C4 (no per-site code). "No new items" exists because of D27: a site that ignores the param would otherwise be fetched `maxPages` times for nothing.
+**Considered:** a paging building block per site type in the registry: more code, and the loop is the same for every query-param site. Path-style paging (`/page/2/`) can be added as a second form of `paging` when a site needs it.
+
+### D29. fullText: spaces at block boundaries, never around inline tags
+`extract-html.js` reads each block's text with `textOf(node)`, which adds a space around block-level tags (`p`, `div`, `li`, `td`, `br`, …) and nothing around inline ones (`a`, `span`, `strong`, `sup`). `blockquote` is now a fullText block.
+**Why:** cheerio's `.text()` joins text nodes as they are, so `line one<br>line two` → "line oneline two" and `<li><p>a</p><p>b</p></li>` → "ab". Inline tags keep the page's own spaces: adding one around `<a>` would break words split by styling (`x<span>y</span>`). The reported "fund intoAnthropic’s" couldn't be reproduced: the live HTML has a normal space there, and cheerio keeps it.
+**Considered:** adding a space around every tag (breaks inline cases); replacing `<br>` before parsing (fixes only one of the cases).
+
+### D30. Discovery per source: a `startUrls` item can override `discover` and `paging`
+A `startUrls` item is either a URL string, which uses the entry's `discover` and `paging`, or an object `{ url, discover, paging }` that overrides them for that source. `toSources(entry)` in `src/lib/paging.js` normalizes both forms; `paging: null` on a source means one page only, even if the entry pages. A publisher's `windowStartReached` is true if **any** source reached the window start; dedup across sources is by canonical URL.
+**Why:** CryptoPotato needs an RSS source and a REST source (D27), and Phase 4 sites mix source types across their start URLs (Benzinga sitemap + HTML, Newsfile RSS + homepage, Investing.com HTML + RSS). Marwan asked for it at plan review.
+**Considered:** one discoverer per entry, with all start URLs of the same type: doesn't fit those sites.
+
+### D31. Every null `fullText` carries a reason: `noBody`, `blocked` or `error`
+Articles whose page has no text body (e.g. CryptoPotato `/video/` posts: a title and a JS video player) are **kept**, with `fullText: null`. The controller records why each written article's `fullText` is null:
+- `noBody`: the page loaded, but the extractor found no text body.
+- `blocked`: the fetch failed with HTTP 401, 403, 429 or 451 (the fetcher now sets `err.status`).
+- `error`: any other fetch failure (5xx, timeout, network).
+
+`stats.json` counts them per publisher (`"fullTextNull": { "noBody": 2, "blocked": 0, "error": 0 }`) and lists them (`fullTextNullUrls: [{ url, reason }]`). The validator shows the reason in each R-A9 warning, and **fails** on a null with no recorded reason. The reasons live in `stats.json`, not in `articles.jsonl`, so the deliverable's record shape stays as specified.
+**Why:** Marwan: "every article" comes first, and skipping them silently loses data. A null must never be unexplained (R-A9), and the README needs the counts.
+**Limit:** a block page served with status 200 (a challenge page) would be counted as `noBody`. Phase 4's blocking ladder (D13) detects those.
+**Considered:** skipping body-less pages (silent data loss); a reason field in each record (changes the deliverable's shape).
+
+### D32. `text` fallback chain: feed/API description → page meta description → first paragraph
+`extract-html.js` gained a default `description` selector (`meta[property="og:description"], meta[name="description"]`). `text` is the first non-empty value of: the feed/API item's description, the page's meta description, then the first paragraph of `fullText`. If none exists, `text` is `""` (R-A7 warning).
+**Why:** each is the publisher's own summary, never a guess. The meta description helps pages whose feed item has no description.
+**Note:** the two CryptoPotato video posts have none of the three, so their `text` stays `""`.
+**Considered:** using the title as `text` (that's not a summary, and it duplicates a field).
+
+### D33. TechCrunch: the REST API is added as a second source, after the given feed
+Same pattern as CryptoPotato (D27, D30), and schema-only: `startUrls` = the given feed (string, using the entry's `rss` + `?paged=N`), then `{ url: '…/wp-json/wp/v2/posts?per_page=100&_fields=…', discover: 'wp-json', paging: { param: 'page', maxPages: 10 } }`.
+**Why:** a URL-by-URL diff against the REST API showed the RSS feed leaves out some posts (`5-desk-gadgets-that-can-make-your-workday-better`, Nov 21, was not in the feed). After the change, all 242 REST posts in the window are in our output, plus 1 feed-only `/video/` post. The cost is 3 extra list requests per run.
+**Considered:** the REST API alone (would drop the given start URL, R-D2, and the feed-only video posts).
 
 ---
 

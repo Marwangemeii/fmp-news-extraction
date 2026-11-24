@@ -1,9 +1,10 @@
 /**
  * `npm run validate [-- --run-at <iso>]`
- * Checks output/articles.jsonl against the field-level rules in REQUIREMENTS §3 (+ R-D1, R-D5, R-L6).
+ * Checks output/articles.jsonl against the field-level rules in REQUIREMENTS §3 (+ R-D1, R-D3, R-D5, R-L6),
+ * using output/stats.json from the same run for the run time and the per-publisher counts.
  * Exits with code 1 if any rule fails. Warnings are reported but don't fail.
  */
-import { stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { readJsonl } from '../src/lib/jsonl.js';
 import { isTrackingParam } from '../src/lib/url.js';
@@ -11,6 +12,7 @@ import { getWindow, isInWindow } from '../src/lib/window.js';
 import { publishers } from '../src/publishers.js';
 
 const FILE = 'output/articles.jsonl';
+const STATS = 'output/stats.json';
 const KEYS = ['publishedDate', 'publisher', 'site', 'url', 'title', 'image', 'text', 'fullText', 'symbol', 'type', 'labels', 'events'];
 const TYPES = ['stock', 'pressReleases', 'crypto', 'forex', 'general'];
 const LABELS = ['earnings', 'dividends', 'splits', 'ipos', 'others'];
@@ -20,9 +22,26 @@ const siteByName = new Map(publishers.map((p) => [p.name, p.site]));
 
 const { values } = parseArgs({ options: { 'run-at': { type: 'string' } } });
 
-// The run time is when the file was written (D22), so validating later doesn't shift the window.
-const runAt = values['run-at'] ? new Date(values['run-at']) : (await stat(FILE)).mtime;
+// The run time comes from stats.json, written by the same run (D26), so validating later doesn't shift the window.
+let stats;
+try {
+  stats = JSON.parse(await readFile(STATS, 'utf8'));
+} catch (err) {
+  console.error(`Can't read ${STATS} (${err.code ?? err.message}). Run \`npm start\` first.`);
+  process.exit(1);
+}
+const runAt = new Date(values['run-at'] ?? stats.runAt);
 const window = getWindow(runAt);
+
+// url → why its fullText is null, recorded by the controller (D31).
+const NULL_REASONS = {
+  noBody: 'the page loaded but has no text body',
+  blocked: 'the site refused the request',
+  error: 'the fetch failed',
+};
+const nullReasonByUrl = new Map(
+  Object.values(stats.publishers ?? {}).flatMap((s) => (s.fullTextNullUrls ?? []).map((x) => [x.url, x.reason])),
+);
 
 /** rule ID → list of { line, url, msg } */
 const failures = new Map();
@@ -96,8 +115,11 @@ for (const { line, record: r, error } of rows) {
   else if (!r.text.trim()) add(warnings, 'R-A7', line, r.url, 'text is empty');
 
   // R-A8 / R-A9: fullText
-  if (r.fullText === null) add(warnings, 'R-A9', line, r.url, 'fullText is null (allowed only if the site blocked us)');
-  else if (typeof r.fullText !== 'string' || !r.fullText.trim()) fail('R-A8', 'fullText is not a non-empty string or null');
+  if (r.fullText === null) {
+    const reason = nullReasonByUrl.get(r.url);
+    if (!reason) fail('R-A9', 'fullText is null with no recorded reason in stats.json');
+    else add(warnings, 'R-A9', line, r.url, `fullText is null: ${reason} (${NULL_REASONS[reason] ?? 'unknown reason'})`);
+  } else if (typeof r.fullText !== 'string' || !r.fullText.trim()) fail('R-A8', 'fullText is not a non-empty string or null');
 
   // R-A10 / R-A11
   if (r.symbol !== null && typeof r.symbol !== 'string') fail('R-A10', `symbol not null or string: ${JSON.stringify(r.symbol)}`);
@@ -124,15 +146,27 @@ for (const { line, record: r, error } of rows) {
   }
 }
 
+// --- Cross-checks against stats.json ---
+for (const [name, s] of Object.entries(stats.publishers ?? {})) {
+  if (!s.enabled) continue;
+  const n = perPublisher.get(name) ?? 0;
+  // Catches a stats.json left over from a different run than articles.jsonl.
+  if (s.written !== n) add(failures, 'stats', 0, '', `${name}: stats say written ${s.written}, articles.jsonl has ${n}`);
+  if (!s.windowStartReached) add(warnings, 'R-D3', 0, '', `${name}: window start not reached (oldest ${s.oldestDate})`);
+  if (s.failed) add(warnings, 'R-D4', 0, '', `${name} failed: ${s.failed}`);
+}
+if (stats.limit) add(warnings, 'R-D3', 0, '', `dev run with --limit ${stats.limit}: not a full collection`);
+
 // --- Report ---
 console.log(`Validating ${FILE}: ${rows.length} articles`);
-console.log(`Window: ${window.start.toISOString()} → ${window.end.toISOString()} (run at ${values['run-at'] ? '--run-at' : 'file mtime'})`);
+console.log(`Window: ${window.start.toISOString()} → ${window.end.toISOString()} (run at ${runAt.toISOString()}, from ${values['run-at'] ? '--run-at' : STATS})`);
 for (const [name, n] of perPublisher) console.log(`  ${name}: ${n}`);
 
 const report = (title, map) => {
   for (const [rule, list] of map) {
     console.log(`${title} ${rule}: ${list.length}`);
-    for (const { line, url, msg } of list.slice(0, 5)) console.log(`    line ${line} ${url}\n      ${msg}`);
+    // line 0 = a run-level message (from stats.json), not tied to one article
+    for (const { line, url, msg } of list.slice(0, 5)) console.log(line ? `    line ${line} ${url}\n      ${msg}` : `    ${msg}`);
     if (list.length > 5) console.log(`    … and ${list.length - 5} more`);
   }
 };

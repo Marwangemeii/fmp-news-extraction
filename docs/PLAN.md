@@ -6,8 +6,8 @@ Work on one phase at a time. Each phase ends with a handoff file in `docs/handof
 | Phase | Day | Status |
 |---|---|---|
 | 0. Repo + docs | Sat 21 | done |
-| 1. Skeleton + first real path | Sat 21 | done (awaiting diff approval) |
-| 2. Two easy sites, full window | Sun 22 | todo |
+| 1. Skeleton + first real path | Sat 21 | done |
+| 2. Two easy sites, full window | Sun 22 | done (awaiting diff approval) |
 | 3. Labeller, extractor, traces | Mon 23 – Tue 24 | todo |
 | 4. Remaining 8 sites | Wed 25 – Thu 26 | todo |
 | 5. Full run + quality check | Fri 27 | todo |

@@ -24,6 +24,7 @@ const isRetryable = (status) => status === 429 || status >= 500;
  * @param {string} url
  * @param {{ delayMs?: number }} [entry] the schema entry (only `delayMs` is used)
  * @returns {Promise<{ url: string, body: string }>} `url` is the final URL after redirects
+ * @throws {Error} after the last retry; `err.status` is set when the server answered with an HTTP error
  */
 export async function fetchHttp(url, entry = {}) {
   const delayMs = entry.delayMs ?? 1000;
@@ -37,6 +38,7 @@ export async function fetchHttp(url, entry = {}) {
       if (res.ok) return { url: res.url, body: await res.text() };
 
       lastError = new Error(`HTTP ${res.status} for ${url}`);
+      lastError.status = res.status; // lets the controller tell "blocked" (401/403/429) from other errors
       if (!isRetryable(res.status)) break;
     } catch (err) {
       // Network error or timeout: worth retrying.

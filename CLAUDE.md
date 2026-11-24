@@ -35,7 +35,9 @@ Take-home task for FMP (Financial Modeling Prep): collect every article that 10 
 ## Commands (keep this list current)
 - `npm install`
 - `npx playwright install chromium`: needed once, for the browser fetcher
-- `npm start`: runs the whole schema and writes `output/articles.jsonl`
+- `npm start`: runs the whole schema and writes `output/articles.jsonl` + `output/stats.json`
+- `npm start -- --only <publisher> --limit <n>`: dev run of one publisher, n articles
+- `CACHE=1 npm start` (PowerShell: `$env:CACHE=1; npm start`): dev cache for article pages in `.cache/` (D15)
 - `npm test`
-- `npm run validate`: checks `output/articles.jsonl` against the requirements
+- `npm run validate`: checks `output/articles.jsonl` against the requirements (run time from `output/stats.json`; `-- --run-at <iso>` overrides)
 - `npm run explain -- <url>`: prints the trace for one article (from Phase 3)
