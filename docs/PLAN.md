@@ -8,7 +8,7 @@ Work on one phase at a time. Each phase ends with a handoff file in `docs/handof
 | 0. Repo + docs | Sat 21 | done |
 | 1. Skeleton + first real path | Sat 21 | done |
 | 2. Two easy sites, full window | Sun 22 | done (awaiting diff approval) |
-| 3. Labeller, extractor, traces | Mon 23 – Tue 24 | todo |
+| 3. Labeller, extractor, traces | Mon 23 – Tue 24 | in progress (M1 done, awaiting diff approval; M2 next) |
 | 4. Remaining 8 sites | Wed 25 – Thu 26 | todo |
 | 5. Full run + quality check | Fri 27 | todo |
 | 6. README, methodology, rehearsal | Sat 28 | todo |
@@ -43,6 +43,7 @@ TechCrunch + CryptoPotato: page back through the full 14 days, clean `fullText`,
 ## Phase 3: Labeller, extractor, traces
 Pre-filter → LLM → conversion → checks → trace (D8–D12, D14). Symbol mapping, `type` rule, `npm run explain`, gold set (~50 hand-labelled articles) + accuracy script.
 **Done when:** the gold-set accuracy is measured, every evidence check is enforced, and `explain` works on any article.
+**Milestones (agreed 2026-11-25):** M1 = pre-filter + LLM (prompts, schemas, cache) + converters + checks + traces + explain + fixtures/eval (labels + event fields): **done**. M2 = symbol + relatedSymbols + FMP suffix, `type` rule, `figures[]` in the output, `time`/`timeExact` (D11), eval on those fields + Haiku vs Sonnet extract comparison.
 
 ## Phase 4: Remaining 8 sites
 Suggested order, easier to harder: Newsfile, GlobeNewswire, Benzinga, Business Wire, Zacks, Fox Business, Investing.com, Reuters. For each: discovery route, window coverage, selectors, clean-up, and the blocking ladder (D13), logged in `docs/SITES.md`.

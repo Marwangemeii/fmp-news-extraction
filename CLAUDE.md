@@ -37,7 +37,10 @@ Take-home task for FMP (Financial Modeling Prep): collect every article that 10 
 - `npx playwright install chromium`: needed once, for the browser fetcher
 - `npm start`: runs the whole schema and writes `output/articles.jsonl` + `output/stats.json`
 - `npm start -- --only <publisher> --limit <n>`: dev run of one publisher, n articles
-- `CACHE=1 npm start` (PowerShell: `$env:CACHE=1; npm start`): dev cache for article pages in `.cache/` (D15)
+- `CACHE=1 npm start` (PowerShell: `$env:CACHE=1; npm start`): dev cache for article pages in `.cache/` (D15) and LLM answers in `.cache/llm/` (D36)
 - `npm test`
 - `npm run validate`: checks `output/articles.jsonl` against the requirements (run time from `output/stats.json`; `-- --run-at <iso>` overrides)
-- `npm run explain -- <url>`: prints the trace for one article (from Phase 3)
+- `npm run explain -- <url or part of it> [--json]`: prints the trace for one article from `output/traces.jsonl`
+- `npm run eval [-- --verbose] [-- --only <prefix>]`: runs the real labeller on `test/fixtures/articles` against `test/fixtures/gold.json` (LLM cache always on); `LLM_EXTRACT_MODEL=claude-sonnet-5-5 npm run eval` compares models
+- `node scripts/make-fixture.js <url> --publisher <name> --out <file> [--body <css>] [--date <css>] [--cached]`: saves one article as an eval fixture
+- `LLM_BUDGET_USD=1 npm start`: caps the run's estimated LLM spend (D34). `npm start` and `npm run eval` load `.env` (Node's `--env-file-if-exists`)

@@ -1,0 +1,166 @@
+{
+  "_status": "DRAFT – to be verified by Marwan. Drafted by Claude Code by reading each article (not from LLM output), 2026-11-25.",
+  "_format": "Keyed by fixture file name. A field value { \"accept\": [a, b] } means either answer is right (ambiguous article). Fields marked in _m2 are scored from M2 on (symbol, relatedSymbols, type, time, timeExact).",
+  "_m2": ["symbol", "relatedSymbols", "type", "time", "timeExact"],
+  "articles": {
+    "01-ies-q4-results": {
+      "labels": ["earnings"],
+      "symbol": "IESC", "relatedSymbols": ["IESC"], "type": "pressReleases",
+      "events": [
+        { "category": "earnings", "calendarYear": 2026, "period": "Q4", "fiscalDateEnding": "2026-09-30", "date": "2026-11-20",
+          "time": "bmo", "epsActual": 4.5, "epsEstimated": null, "revenueActual": 1390000000, "revenueEstimated": null }
+      ],
+      "notes": "Q4 + full-year release: Q4 figures come first. GAAP diluted $4.50 vs adjusted $4.07. FY EPS $13.24 must not be used. A 'two-for-one stock split ... August 2026' footnote is a passing mention, not splits. time: published 12:45 UTC = 7:45 ET, own press release → bmo (D11)."
+    },
+    "02-t3-defense-q3-results": {
+      "labels": ["earnings"],
+      "symbol": "DFNS", "relatedSymbols": ["DFNS"], "type": "pressReleases",
+      "events": [
+        { "category": "earnings", "calendarYear": 2026, "period": "Q3", "fiscalDateEnding": "2026-09-30", "date": "2026-11-24",
+          "time": "bmo", "epsActual": -30.8, "epsEstimated": null, "revenueActual": 4900000, "revenueEstimated": null }
+      ],
+      "notes": "Net income positive, basic EPS +$5.05, but 'a loss of $30.80 per diluted share': D12 diluted over basic → −30.80. Q2 2026 figures are 'previous'. time: 14:10 UTC = 9:10 ET → bmo."
+    },
+    "03-johnson-outdoors-date": {
+      "labels": ["earnings"],
+      "symbol": "JOUT", "relatedSymbols": ["JOUT"], "type": "pressReleases",
+      "events": [
+        { "category": "earnings", "calendarYear": 2026, "period": "Q4", "fiscalDateEnding": null, "date": "2026-12-11",
+          "time": "bmo", "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null }
+      ],
+      "notes": "Date announcement: 'before market open'. The 11:00 a.m. ET is the conference call, not the release time."
+    },
+    "04-qnb-dividend": {
+      "labels": ["dividends"],
+      "symbol": "QNBC", "relatedSymbols": ["QNBC"], "type": "pressReleases",
+      "events": [
+        { "category": "dividends", "dividend": 0.39, "declarationDate": "2026-11-24", "date": null, "recordDate": "2026-12-10", "paymentDate": "2026-12-24" }
+      ],
+      "notes": "'declared … on November 24' has no year in that sentence → yearInferred (or the dateline 'Nov. 24, 2026'). No ex-dividend date stated."
+    },
+    "05-hp-results-dividend": {
+      "labels": ["earnings", "dividends"],
+      "symbol": "HPQ", "relatedSymbols": ["HPQ"], "type": "pressReleases",
+      "events": [
+        { "category": "earnings", "calendarYear": 2026, "period": "Q4", "fiscalDateEnding": "2026-10-31", "date": "2026-11-24",
+          "time": "amc", "epsActual": 0.84, "epsEstimated": null, "revenueActual": 16000000000, "revenueEstimated": null },
+        { "category": "dividends", "dividend": 0.31, "declarationDate": null, "date": null, "recordDate": "2026-12-09", "paymentDate": "2027-01-06" }
+      ],
+      "notes": "Full-year figures come FIRST ($2.62 GAAP EPS, $60.5B revenue); Q4 is $0.84 GAAP / $0.83 non-GAAP, $16.0B. The $0.30 dividend is last quarter's (previous). fiscalDateEnding only in a table header ('Three months ended | October 31, 2026'). time: 21:15 UTC = 16:15 ET → amc."
+    },
+    "06-seneca-forward-split": {
+      "labels": ["splits"],
+      "symbol": "SENEA", "relatedSymbols": ["SENEA", "SENEB"], "type": "pressReleases",
+      "events": [
+        { "category": "splits", "date": { "accept": ["2026-11-16", "2026-11-17"] }, "numerator": 5, "denominator": 1, "splitType": "forward" }
+      ],
+      "notes": "'five-for-one forward stock split'. Effective on filing, Nov 16; split-adjusted trading from Nov 17."
+    },
+    "07-bullfrog-reverse-split": {
+      "labels": ["splits"],
+      "symbol": "BFRG", "relatedSymbols": ["BFRG", "BFRGW"], "type": "pressReleases",
+      "events": [
+        { "category": "splits", "date": { "accept": ["2026-11-30", null] }, "numerator": 1, "denominator": 10, "splitType": "reverse" }
+      ],
+      "notes": "No explicit effective date; split-adjusted trading begins Nov 30."
+    },
+    "08-ready-capital-reverse-split": {
+      "labels": ["splits"],
+      "symbol": "RC", "relatedSymbols": ["RC"], "type": "pressReleases",
+      "events": [
+        { "category": "splits", "date": { "accept": ["2026-12-07", "2026-12-08"] }, "numerator": 1, "denominator": 10, "splitType": "reverse" }
+      ],
+      "notes": "Ratio in words: 'one-for-ten'. Effective 5:00 p.m. ET Dec 7; split-adjusted trading Dec 8."
+    },
+    "09-inlif-consolidation": {
+      "labels": ["splits"],
+      "symbol": "INLF", "relatedSymbols": ["INLF"], "type": "pressReleases",
+      "events": [
+        { "category": "splits", "date": "2026-11-27", "numerator": 1, "denominator": 16, "splitType": "reverse" }
+      ],
+      "notes": "Called both 'share consolidation' and '1-for-16 reverse stock split'."
+    },
+    "10-windward-ipo-pricing": {
+      "labels": ["ipos"],
+      "symbol": "WWB", "relatedSymbols": ["WWB"], "type": "pressReleases",
+      "events": [
+        { "category": "ipos", "company": { "accept": ["Windward Bio Group AG", "Windward Bio"] }, "exchange": "NASDAQ", "date": "2026-11-13", "actions": "priced",
+          "shares": 10294117, "priceRange": null, "pricePerShare": 17, "marketCap": null }
+      ],
+      "notes": "Swiss company, Nasdaq listing (no suffix). Also a concurrent private placement (not the IPO)."
+    },
+    "11-vitacig-ipo-filing": {
+      "labels": ["ipos"],
+      "symbol": "MCIG", "relatedSymbols": ["MCIG"], "type": "pressReleases",
+      "events": [
+        { "category": "ipos", "company": { "accept": ["VitaCig, Inc.", "VitaCig"] }, "exchange": null, "date": null, "actions": "filed",
+          "shares": { "accept": [250000000, null] }, "priceRange": null, "pricePerShare": null, "marketCap": null }
+      ],
+      "notes": "2014 release (fixture only). A spin-off via Form S-1; the shares are paid out as a share dividend, so 'dividends' is arguable. Only the parent's ticker (OTCQB:MCIG) is written."
+    },
+    "12-cmb-tech-q3-results": {
+      "labels": ["earnings", "dividends"],
+      "symbol": "CMBT", "relatedSymbols": ["CMBT", "CMBT.BR", "CMBTO.OL"], "type": "pressReleases",
+      "events": [
+        { "category": "earnings", "calendarYear": 2026, "period": "Q3", "fiscalDateEnding": "2026-09-30", "date": "2026-11-24",
+          "time": { "accept": ["bmo", null] }, "epsActual": 1.29, "epsEstimated": null, "revenueActual": 802932000, "revenueEstimated": null },
+        { "category": "dividends", "dividend": { "accept": [0.21, 0.65] }, "declarationDate": { "accept": [null, "2026-11-24"] },
+          "date": { "accept": ["2026-12-09", "2026-12-08"] }, "recordDate": "2026-12-09", "paymentDate": "2026-12-17" }
+      ],
+      "notes": "IFRS reporter; dates written '30 September 2026'. Revenue is only in a table 'in thousands' (802,932) → our D37 rule refuses a bare number: expected MISS. Distribution = $0.21 dividend + $0.44 share premium. Ex-date differs by exchange (Euronext Dec 8, NYSE Dec 9). Three listings: NYSE, Euronext Brussels (.BR), Oslo (.OL, unverified suffix)."
+    },
+    "13-infrastructure-split-corp-distribution": {
+      "labels": ["dividends"],
+      "symbol": "IS.TO", "relatedSymbols": ["IS.TO"], "type": "pressReleases",
+      "events": [
+        { "category": "dividends", "dividend": 0.15, "declarationDate": null, "date": null, "recordDate": "2026-11-30", "paymentDate": "2026-12-15" }
+      ],
+      "notes": "Adversarial: 'Split Corp.' is a fund name, NOT a stock split. Values only in a table row 'November 30, 2026 | December 15, 2026 | $0.15'. TSX → .TO."
+    },
+    "14-transcontinental-date": {
+      "labels": ["earnings"],
+      "symbol": null, "relatedSymbols": [], "type": "pressReleases",
+      "events": [
+        { "category": "earnings", "calendarYear": 2026, "period": { "accept": ["Q4", "FY"] }, "fiscalDateEnding": null, "date": "2026-12-09",
+          "time": "amc", "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null }
+      ],
+      "notes": "Canadian date announcement, no ticker written in the text (symbol must be null). The 2027 calendar and the Dec 10 call are distractors."
+    },
+    "15-fervo-ipo-class-action": {
+      "labels": ["others"],
+      "symbol": "FRVO", "relatedSymbols": ["FRVO"], "type": "pressReleases",
+      "events": [],
+      "notes": "Adversarial: the IPO is mentioned many times, but the subject is a class action (a law firm's notice), not an IPO action."
+    },
+    "16-flipkart-ceo-ipo-mention": {
+      "labels": ["others"],
+      "symbol": null, "relatedSymbols": [], "type": "general",
+      "events": [],
+      "notes": "IPO only in passing ('amid IPO uncertainty'); subject is the CEO stepping down."
+    },
+    "17-anthropic-ipo-priced-news": {
+      "labels": ["ipos"],
+      "symbol": "ANT", "relatedSymbols": ["ANT"], "type": "stock",
+      "events": [
+        { "category": "ipos", "company": "Anthropic", "exchange": "NASDAQ", "date": null, "actions": "priced",
+          "shares": 980000000, "priceRange": "$70 to $78", "pricePerShare": 83, "marketCap": { "accept": [1500000000000, null] } }
+      ],
+      "notes": "News story (not a press release). First trading day only as 'on Thursday' (relative) → null. marketCap: 'valued at roughly $1.5 trillion on a fully diluted basis'."
+    },
+    "18-nvidia-revenue-news": {
+      "labels": ["earnings"],
+      "symbol": null, "relatedSymbols": [], "type": "general",
+      "events": [
+        { "category": "earnings", "calendarYear": 2027, "period": "Q3", "fiscalDateEnding": null, "date": null,
+          "time": null, "epsActual": null, "epsEstimated": null, "revenueActual": 115800000000, "revenueEstimated": { "accept": [null, 108000000000] } }
+      ],
+      "notes": "News story of actual results. 'third quarter of fiscal 2027'. Date only as 'on Tuesday' (relative) → null. $108B was the company's own guidance, not an analyst estimate. No ticker written."
+    },
+    "19-anthropic-ipo-risks-opinion": {
+      "labels": ["others"],
+      "symbol": null, "relatedSymbols": [], "type": "crypto",
+      "events": [],
+      "notes": "Opinion piece on the risks of buying the IPO. Arguable: it states 'shares expected to start trading on November 19th' (ipos/expected). Drafted as others because the subject is the risks, not an IPO action."
+    }
+  }
+}

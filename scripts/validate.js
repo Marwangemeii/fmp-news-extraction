@@ -1,6 +1,6 @@
 /**
  * `npm run validate [-- --run-at <iso>]`
- * Checks output/articles.jsonl against the field-level rules in REQUIREMENTS §3 (+ R-D1, R-D3, R-D5, R-L6),
+ * Checks output/articles.jsonl against the field-level rules in REQUIREMENTS §3 and §5 (+ R-D1, R-D3, R-D5, R-L6, R-J5),
  * using output/stats.json from the same run for the run time and the per-publisher counts.
  * Exits with code 1 if any rule fails. Warnings are reported but don't fail.
  */
@@ -19,6 +19,26 @@ const LABELS = ['earnings', 'dividends', 'splits', 'ipos', 'others'];
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const ENTITY = /&(amp|lt|gt|quot|apos|nbsp|#\d+|#x[0-9a-f]+|[a-z]+);/i;
 const siteByName = new Map(publishers.map((p) => [p.name, p.site]));
+
+/** Required event fields per category (REQUIREMENTS §5), split by kind for the R-E8/R-E9 checks. */
+const EVENT_FIELDS = {
+  earnings: {
+    dates: ['fiscalDateEnding', 'date'],
+    numbers: ['calendarYear', 'epsActual', 'epsEstimated', 'revenueActual', 'revenueEstimated'],
+    enums: { period: ['Q1', 'Q2', 'Q3', 'Q4', 'FY'], time: ['bmo', 'amc'] },
+  },
+  dividends: { dates: ['declarationDate', 'date', 'recordDate', 'paymentDate'], numbers: ['dividend'], enums: {} },
+  splits: { dates: ['date'], numbers: ['numerator', 'denominator'], enums: { splitType: ['forward', 'reverse'] } },
+  ipos: {
+    dates: ['date'],
+    numbers: ['shares', 'pricePerShare', 'marketCap'],
+    enums: { actions: ['filed', 'expected', 'priced', 'postponed', 'withdrawn'] },
+    text: ['company', 'exchange', 'priceRange'],
+  },
+};
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const isRealYmd = (s) => YMD.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+const normalizeWs = (s) => s.replace(/\s+/g, ' ').trim();
 
 const { values } = parseArgs({ options: { 'run-at': { type: 'string' } } });
 
@@ -41,6 +61,10 @@ const NULL_REASONS = {
 };
 const nullReasonByUrl = new Map(
   Object.values(stats.publishers ?? {}).flatMap((s) => (s.fullTextNullUrls ?? []).map((x) => [x.url, x.reason])),
+);
+// url → the LLM failure that made it `others` (D38): reported as a warning, never silent.
+const llmErrorByUrl = new Map(
+  Object.values(stats.publishers ?? {}).flatMap((s) => (s.llmErrorUrls ?? []).map((x) => [x.url, x])),
 );
 
 /** rule ID → list of { line, url, msg } */
@@ -123,6 +147,9 @@ for (const { line, record: r, error } of rows) {
 
   // R-A10 / R-A11
   if (r.symbol !== null && typeof r.symbol !== 'string') fail('R-A10', `symbol not null or string: ${JSON.stringify(r.symbol)}`);
+  if ('relatedSymbols' in r && !(Array.isArray(r.relatedSymbols) && r.relatedSymbols.every((x) => typeof x === 'string'))) {
+    fail('R-J5', `relatedSymbols must be an array of strings: ${JSON.stringify(r.relatedSymbols)}`);
+  }
   if (!TYPES.includes(r.type)) fail('R-A11', `type ${JSON.stringify(r.type)} not in ${TYPES.join('/')}`);
 
   // R-A12 / R-L6: labels
@@ -144,6 +171,43 @@ for (const { line, record: r, error } of rows) {
       fail('R-A13', `event categories [${categories}] don't match labels [${real}]`);
     }
   }
+
+  // R-E1 / R-E2..E7 / R-E8 / R-E9: event fields
+  for (const e of Array.isArray(r.events) ? r.events : []) {
+    const spec = EVENT_FIELDS[e?.category];
+    if (!spec) continue; // unknown category is already an R-A13 failure
+    const where = `${e.category}`;
+    if (!('symbol' in e)) fail('R-E2', `${where}: missing "symbol"`);
+    // R-E1: every evidence line is in fullText, word for word (whitespace normalized).
+    if (typeof e.evidence !== 'string' || !e.evidence.trim()) fail('R-E1', `${where}: evidence is empty`);
+    else if (typeof r.fullText !== 'string') fail('R-E1', `${where}: evidence but no fullText to find it in`);
+    else {
+      const hay = normalizeWs(r.fullText);
+      for (const line of e.evidence.split('\n')) {
+        if (!hay.includes(normalizeWs(line))) fail('R-E1', `${where}: evidence not in fullText: "${line.slice(0, 80)}…"`);
+      }
+    }
+    for (const k of spec.dates) {
+      if (!(k in e)) fail('R-E2', `${where}: missing "${k}"`);
+      else if (e[k] !== null && !(typeof e[k] === 'string' && isRealYmd(e[k]))) fail('R-E8', `${where}.${k} not YYYY-MM-DD: ${JSON.stringify(e[k])}`);
+    }
+    for (const k of spec.numbers) {
+      if (!(k in e)) fail('R-E2', `${where}: missing "${k}"`);
+      else if (e[k] !== null && !(typeof e[k] === 'number' && Number.isFinite(e[k]))) fail('R-E9', `${where}.${k} not a plain number: ${JSON.stringify(e[k])}`);
+    }
+    for (const [k, allowed] of Object.entries(spec.enums)) {
+      if (!(k in e)) fail('R-E2', `${where}: missing "${k}"`);
+      else if (e[k] !== null && !allowed.includes(e[k])) fail('R-E2', `${where}.${k} ${JSON.stringify(e[k])} not in ${allowed.join('/')}`);
+    }
+    for (const k of spec.text ?? []) {
+      if (!(k in e)) fail('R-E7', `${where}: missing "${k}"`);
+      else if (e[k] !== null && typeof e[k] !== 'string') fail('R-E7', `${where}.${k} not text: ${JSON.stringify(e[k])}`);
+    }
+  }
+
+  // D38: an article labelled `others` because the LLM failed is reported, never silent.
+  const llmError = llmErrorByUrl.get(r.url);
+  if (llmError) add(warnings, 'LLM', line, r.url, `labelled others because the LLM failed (${llmError.kind} in ${llmError.stage}): ${llmError.message}`);
 }
 
 // --- Cross-checks against stats.json ---

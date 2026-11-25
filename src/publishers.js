@@ -9,7 +9,7 @@ const DEFAULTS = {
   enabled: false,
   fetcher: { list: 'http', article: 'http' }, // registry.fetchers names: list pages / article pages
   extract: 'html', // registry.extractors name
-  label: 'placeholder', // registry.labellers name (Phase 3 swaps it here, once)
+  label: 'llm', // registry.labellers name: pre-filter → LLM → code checks (D34)
   delayMs: 1000, // polite pause before each request (D6)
   defaultType: 'general', // placeholder until the Phase 3 type rule (D23)
   selectors: {}, // overrides for DEFAULT_SELECTORS in src/blocks/extract-html.js

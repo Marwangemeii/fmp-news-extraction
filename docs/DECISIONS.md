@@ -200,9 +200,76 @@ Same pattern as CryptoPotato (D27, D30), and schema-only: `startUrls` = the give
 **Why:** a URL-by-URL diff against the REST API showed the RSS feed leaves out some posts (`5-desk-gadgets-that-can-make-your-workday-better`, Nov 21, was not in the feed). After the change, all 242 REST posts in the window are in our output, plus 1 feed-only `/video/` post. The cost is 3 extra list requests per run.
 **Considered:** the REST API alone (would drop the given start URL, R-D2, and the feed-only video posts).
 
+### D34. Labeller pipeline and models: Haiku 5.5 for both stages
+`labellers.llm` (`src/blocks/label-llm.js`), the default in `DEFAULTS.label`:
+pre-filter → **classify** (labels + the sentence proving each, symbols as written) → **K4** label check → **extract** (only for the surviving labels) → convert → check → event + trace.
+- **Models:** `claude-haiku-5-5` for classify (effort `low`) **and** extract (effort `medium`), all in `src/llm/config.js` with the prompt version, max tokens, prices and concurrency (4 calls in flight per publisher). `LLM_CLASSIFY_MODEL` / `LLM_EXTRACT_MODEL` override them, so `npm run eval` can compare models.
+- **Classify input:** title + summary + the first ~6,000 characters of the body, cut at a paragraph break (`topOfBody()`); the trace records `classifyInput: { bodyChars, sentChars, truncated }`. Extract always gets the full article.
+- **Cost:** a full 10-site run is estimated at ~$7 (assumes ~15k articles, 50% pass the pre-filter, 20% get a real label). Measured on TechCrunch + CryptoPotato: ~$0.0003 per classify call, ~$0.001 per extract call. `LLM_BUDGET_USD` caps one run's spend; past it, articles get `llmError: budget`.
+
+**Why:** Marwan's API credit is $10; Sonnet for extract would be ~$80 per full run. Labels depend on the subject, which is at the top of the article.
+**Considered:** Sonnet 5.5 for extract (better on hard tables, 10× the price; compared in the M2 eval), Opus (2× Sonnet), the Batch API (−50% but async polling) and prompt caching (the ~1k-token system prompt is under the minimum cacheable size): both noted as production options for the README. No server-side model fallback (D38).
+
+### D35. Strict JSON via structured outputs, with a flat extract schema
+Both calls use `output_config: { format: { type: 'json_schema', schema } }` on `messages.create` (SDK 1.14), with hand-written schemas in `src/llm/schemas.js`. The reply is read from the `text` block **by type** (Haiku 5.5 thinks by default and can return thinking blocks first), after checking `stop_reason`.
+Extract returns a **flat list** `values: [{ field: "dividends.recordDate", raw, evidence }]` (+ `figures[]`, + `ipoAction`) and leaves out what the article doesn't state.
+
+**Why:** the API rejected three earlier shapes, and every failure was caught as `llmError` in the first runs: (1) `enum` + `type: ['string','null']` is invalid; (2) a schema may have at most **16 union-typed fields** (the nested schema had 46 nullable fields); (3) the nested, null-free version was refused as "compiled grammar too large". The flat list has 0 unions, is ~1.4 KB, and the model outputs fewer tokens (no placeholders for unstated fields). `test/checks.test.js` counts the unions so (2) can't come back.
+**Considered:** zod + `messages.parse()` (one more dependency for the same guarantee), tool use with `strict: true` (same schema limits), one schema per label combination (more moving parts).
+
+### D36. LLM response cache (CACHE=1)
+`.cache/llm/<sha256>.json`, keyed by `model | promptVersion | url | sha256(system + user message + schema + effort + max_tokens)`. Only successful replies (`end_turn`, valid JSON) are cached. A hit costs 0 tokens and is marked `fromCache` in the trace.
+
+**Why:** reruns during development cost nothing, and a run is reproducible: the model is not fully deterministic (fixture 16 flipped `ipos` → `others` when only `max_tokens` changed). Any change to a prompt, schema or setting misses the cache automatically.
+**Considered:** keying by url only (stale answers after a prompt change); caching failures (a retry could never succeed).
+
+### D37. Converters: rules that refuse rather than guess
+`src/lib/convert.js`, pure functions, each returns `{ value, rule }` or `{ value: null, reason }`:
+- `parseMoney` (revenue, market cap): scale words (thousand/k, million/m/mn/mm, billion/b/bn, trillion), currency recorded. A bare number needs a currency AND ≥ 1,000,000; otherwise it's refused, because table values are often "in thousands" (CMB.TECH's `2,026,505` would have been revenue of $2M instead of $2.0B).
+- `parsePerShare` (EPS, dividend, offering price): `(0.12)`, `$(0.12)`, `-$0.12` and `loss of $0.12` are negative; `84 cents` → 0.84; a scale word → refused.
+- `parseDate`: `December 15, 2026`, `Dec. 15, 2026`, `Sept. 30, 2026`, `15 December 2026`, ISO; slash dates only if unambiguous (`11/05/2026` → null); invalid calendar dates → null.
+- **Missing year (`yearInferred`):** a date written without a year ("payable January 15") gets the year that puts it **nearest the article's publishedDate**, and the trace marks it `yearInferred: true` (`trace.result.yearInferred` lists the fields). Explicitly approved by Marwan. It's the only inference the converters make, it's deterministic, and it's always visible in the trace.
+- `parseRatio`: N-for-M = N new for M old; number words (`one-for-ten`, `twenty-five`); `one (1) … for every ten (10)`; `3:1`. `splitType` comes from numerator vs denominator, not from the LLM.
+- `parsePeriod` (Q1–Q4 / FY; halves and nine months → null), `parseFiscalYear` (`FY26` → 2026; `2025/26` → null).
+
+**Why:** R-E4, R-E8, R-E9, R-E10. Each refusal is a traced null, which beats a plausible wrong number.
+
+### D38. LLM failures are traced and counted, never a silent "others"
+If a call still fails after the SDK's retries (API error, credits exhausted, timeout), is refused by the model, hits `max_tokens`, or is skipped by the budget cap, the article gets `labels: ['others']`, its trace has `llmError: { stage, kind: error|refusal|truncated|budget, message }`, `stats.json` counts `llmErrors` per publisher (+ `llmErrorUrls`), and the validator gives a **warning** per article. **No server-side fallback** to another model, so the trace always shows exactly which model produced each value.
+
+**Why:** Marwan, at plan review. In the first run this caught 25 schema rejections, which were visible immediately instead of looking like 25 normal `others`.
+**Note:** an extract failure also gives `others`, even though the classify labels were proven. That follows Marwan's rule, and it's listed as an open question in handoff 03.
+
+### D39. The code-side checks (K1–K10)
+- **K1** each evidence line is in `fullText` word for word (whitespace collapsed in both; nothing else normalized). **K2** each raw value is inside its evidence. **K3** the converter can read it. A failure makes that value null, and the reason is traced, e.g. `evidence not found in fullText (first 6 of 22 words match)`.
+- **K4** a label stays only if its proving sentence passes K1. The drop rate is in `stats.json` (`labelsProposed`, `labelsDropped`, `labelDropRate`) and in the eval.
+- **K5** labels deduplicated and ordered; `others` is added by code, never by the LLM. **K6** exactly one event per label. **K8** the IPO action needs its wording in its sentence ("priced" ← "pric…"). **K9** a split ratio of 1:1 is refused. **K10** `stop_reason` must be `end_turn`.
+- The event's `evidence` (D10) is **built by code** from the sentences of the values that passed, in article order, plus the label's own sentence. So every line of it has passed K1.
+- Validator additions: R-E1 (every evidence line in fullText), R-E8, R-E9, required event fields, R-J5 shape, the D38 warnings.
+
+### D40. Earnings figure selection by code (D12 in practice) + the figure's period
+The extractor lists every EPS/revenue figure with `metric`, `period` (as written), `basis`, `kind`, `perShare`. Each one is proven on its own (K1–K3), then code picks:
+- only figures for the event's proven period, or with no period stated; a stated match ranks first;
+- `epsActual`: GAAP/IFRS, then basis not stated, never adjusted; diluted, then not stated, then basic. `revenueActual`: GAAP/IFRS, then not stated, then adjusted. Estimates: the first stated.
+- **If the event's period is not proven and the figures span several periods → null** (no pick).
+
+**Why:** HP and IES report the quarter AND the full year in one release, and HP lists the full year first. Without the period, the code picked the full-year EPS ($2.62) for a Q4 event (gold $0.84): a wrong value, the worst kind. With these rules the eval has 0 wrong values.
+**Considered:** taking the first figure in article order (wrong for HP), asking the LLM to choose (not provable).
+
+### D41. Articles with `fullText: null` are `others`, with no LLM call
+There is nothing to check evidence against, so no value could be proven. Traced as `result.why`. **Revisit in Phase 4** for blocked sites, where the feed's title/description may be all we have.
+
+### D42. Fixtures, gold set and eval
+`test/fixtures/articles/*.json` = 19 real articles stored as extracted fields (title, text, fullText, publishedDate), not HTML, made with `scripts/make-fixture.js` (15 from GlobeNewswire, 4 from the TechCrunch/CryptoPotato page cache). `test/fixtures/gold.json` = the expected labels and converted values, **drafted by Claude Code by reading the articles, marked "to be verified by Marwan"**. A field can accept several answers (`{ "accept": [a, b] }`) where an article is ambiguous. `npm run eval` runs the real labeller (cache always on) and reports labels (TP/FP/FN, precision, recall, exact set), fields (correct / **wrong** / **missed**), the K4 drop rate, and tokens and cost. It writes `output/eval-<extract model>.json`.
+
+**Why:** "wrong" (a non-null value that isn't the gold) is a hallucination that got through, so it's reported separately from "missed" (a null). The ~50-article gold set (D8) grows in Phase 5 by sampling real output; the script takes any number of fixtures.
+
+### D43. `relatedSymbols` is written in every record (after `symbol`)
+An array of strings (`[]` until M2). **Why:** R-J5 / D14. It's an added field; the required ones are unchanged.
+
 ---
 
 ## Open questions (decide in the phase noted)
-- **Phase 3:** which Claude model(s); prompt structure.
+- ~~**Phase 3:** which Claude model(s); prompt structure.~~ Decided: D34, D35.
 - **Phase 3:** `symbol` and `type` for articles that skip the LLM: from site metadata and ticker patterns like `(NASDAQ: ABC)`, or `null`.
 - **Phase 3:** the `type` rule: a default per publisher in the schema, overridden by content (e.g. a forex story on Investing.com).

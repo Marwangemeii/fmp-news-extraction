@@ -9,9 +9,12 @@ import { canonicalizeUrl } from './lib/url.js';
 import { isInWindow } from './lib/window.js';
 import { toSources, discoverPages } from './lib/paging.js';
 import { cached } from './lib/cache.js';
+import { mapLimit } from './lib/pool.js';
+import { CONCURRENCY } from './llm/config.js';
 
 /** HTTP statuses that mean the site refused us, as opposed to a broken page or network (D31). */
 const BLOCKED_STATUSES = [401, 403, 429, 451];
+const LABELS = ['earnings', 'dividends', 'splits', 'ipos', 'others'];
 
 /**
  * Looks up a building block by name, failing loudly on a typo in the schema.
@@ -32,12 +35,15 @@ function pick(registry, kind, name) {
  *
  * @param {object[]} publishers schema entries (already filtered by --only in run.js)
  * @param {{ registry: object, window: { start: Date, end: Date }, limit?: number, cache?: boolean }} opts
- * @returns {Promise<{ records: object[], stats: Record<string, object> }>} output records + per-publisher stats
+ * @returns {Promise<{ records: object[], traces: object[], stats: Record<string, object> }>}
+ *   output records, one labeller trace per record (D9), per-publisher stats
  */
 export async function runAll(publishers, { registry, window, limit, cache = false }) {
   const records = [];
+  const traces = [];
   const stats = {};
   const seen = new Set(); // canonical URLs already written, across all publishers (R-D5)
+  const spend = { usd: 0 }; // LLM spend of the whole run, shared by every labeller call (budget cap)
 
   for (const entry of publishers) {
     if (!entry.enabled) {
@@ -50,14 +56,16 @@ export async function runAll(publishers, { registry, window, limit, cache = fals
     stats[entry.name] = s;
     const started = Date.now();
     try {
-      records.push(...(await runPublisher(entry, { registry, window, limit, cache, seen, s })));
+      const out = await runPublisher(entry, { registry, window, limit, cache, seen, s, spend });
+      records.push(...out.records);
+      traces.push(...out.traces);
     } catch (err) {
       s.failed = err.message;
       console.error(`[${entry.name}] FAILED: ${err.message}`);
     }
     s.durationMs = Date.now() - started;
   }
-  return { records, stats };
+  return { records, traces, stats };
 }
 
 function newStats() {
@@ -75,8 +83,54 @@ function newStats() {
     fullTextNullUrls: [],
     oldestDate: null,
     windowStartReached: false,
+    labels: Object.fromEntries(LABELS.map((l) => [l, 0])), // articles per label
+    llm: newLlmStats(),
+    // Articles labelled `others` because an LLM call failed, never silently (D38).
+    llmErrorUrls: [],
     durationMs: 0,
   };
+}
+
+/** LLM accounting (D34); run.js sums these across publishers. */
+export function newLlmStats() {
+  return {
+    prefilterPassed: 0,
+    prefilterSkipped: 0, // no vocabulary, or no fullText: labelled others with no LLM call
+    calls: 0, // billed calls this run
+    cacheHits: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    byModel: {},
+    llmErrors: { error: 0, refusal: 0, truncated: 0, budget: 0 },
+    // K4: labels the classifier proposed vs. dropped because their sentence wasn't in the article.
+    labelsProposed: 0,
+    labelsDropped: 0,
+  };
+}
+
+/** Adds one article's trace to the LLM stats. */
+function countTrace(llm, trace) {
+  if (!trace) return;
+  if (trace.classify) llm.prefilterPassed++;
+  else llm.prefilterSkipped++;
+  for (const call of trace.calls ?? []) {
+    if (call.fromCache) llm.cacheHits++;
+    else llm.calls++;
+    llm.inputTokens += call.inputTokens;
+    llm.outputTokens += call.outputTokens;
+    llm.costUsd += call.costUsd;
+    const m = (llm.byModel[call.model] ??= { calls: 0, cacheHits: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });
+    if (call.fromCache) m.cacheHits++;
+    else m.calls++;
+    m.inputTokens += call.inputTokens;
+    m.outputTokens += call.outputTokens;
+    m.costUsd += call.costUsd;
+  }
+  if (trace.llmError) llm.llmErrors[trace.llmError.kind] = (llm.llmErrors[trace.llmError.kind] ?? 0) + 1;
+  const checks = trace.classify?.labelChecks ?? [];
+  llm.labelsProposed += checks.length;
+  llm.labelsDropped += checks.filter((x) => x.evidenceInFullText === false).length;
 }
 
 /**
@@ -84,7 +138,7 @@ function newStats() {
  * @param {{ registry: object, window: { start: Date, end: Date }, limit?: number, cache: boolean,
  *           seen: Set<string>, s: object }} ctx  `s` is this publisher's stats object, updated in place
  */
-async function runPublisher(entry, { registry, window, limit, cache, seen, s }) {
+async function runPublisher(entry, { registry, window, limit, cache, seen, s, spend }) {
   const fetchList = pick(registry, 'fetchers', entry.fetcher.list);
   const extract = pick(registry, 'extractors', entry.extract);
   const label = pick(registry, 'labellers', entry.label);
@@ -131,8 +185,8 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s }) 
   s.inWindow = todo.length;
   if (limit) todo = todo.slice(0, limit);
 
-  // 3. Fetch → extract → label, one article at a time (D6: limited concurrency).
-  const records = [];
+  // 3. Fetch → extract, one article at a time (D6: polite to the site).
+  const articles = [];
   for (const item of todo) {
     let article;
     let nullReason = null; // why fullText is null, if it is (D31)
@@ -157,8 +211,32 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s }) 
       s.fullTextNull[nullReason]++;
       s.fullTextNullUrls.push({ url: article.url, reason: nullReason });
     }
-    records.push(toRecord(entry, article, label(article)));
+    articles.push(article);
   }
+
+  // 4. Label: a few LLM calls in flight at once (the API, not the site, is the limit here).
+  const ctx = { cache, spend };
+  const results = await mapLimit(articles, CONCURRENCY, async (article) => {
+    try {
+      return await label(article, entry, ctx);
+    } catch (err) {
+      // A bug in the labeller must not lose the article or stop the publisher: traced like an LLM error.
+      const trace = { url: article.url, llmError: { stage: 'labeller', kind: 'error', message: err.message }, calls: [] };
+      return { labels: ['others'], events: [], trace };
+    }
+  });
+
+  const records = [];
+  const traces = [];
+  articles.forEach((article, i) => {
+    const result = results[i];
+    const trace = result.trace ?? null;
+    records.push(toRecord(entry, article, result));
+    if (trace) traces.push(trace);
+    for (const l of result.labels) s.labels[l]++;
+    countTrace(s.llm, trace);
+    if (trace?.llmError) s.llmErrorUrls.push({ url: article.url, ...trace.llmError });
+  });
   s.written = records.length;
   s.fromCache = cacheCounter.hits;
 
@@ -169,11 +247,18 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s }) 
       `${cache ? ` · from cache ${s.fromCache}` : ''}` +
       `${s.fullTextNullUrls.length ? ` · fullText null ${JSON.stringify(s.fullTextNull)}` : ''}`,
   );
-  return records;
+  const l = s.llm;
+  console.log(
+    `[${entry.name}] labels ${JSON.stringify(s.labels)} · pre-filter passed ${l.prefilterPassed}/${articles.length}` +
+      ` · LLM calls ${l.calls} (cached ${l.cacheHits}) · ${l.inputTokens} in / ${l.outputTokens} out · $${l.costUsd.toFixed(4)}` +
+      ` · labels dropped by evidence check ${l.labelsDropped}/${l.labelsProposed}` +
+      `${s.llmErrorUrls.length ? ` · LLM errors ${JSON.stringify(l.llmErrors)}` : ''}`,
+  );
+  return { records, traces };
 }
 
-/** Output record, fields in REQUIREMENTS §3 order. */
-function toRecord(entry, article, { labels, events }) {
+/** Output record, fields in REQUIREMENTS §3 order (+ relatedSymbols after symbol, R-J5). */
+function toRecord(entry, article, { labels, events, symbol = null, relatedSymbols = [], type = entry.defaultType }) {
   return {
     publishedDate: article.publishedDate,
     publisher: entry.name,
@@ -183,8 +268,9 @@ function toRecord(entry, article, { labels, events }) {
     image: article.image,
     text: article.text,
     fullText: article.fullText,
-    symbol: null, // Phase 3
-    type: entry.defaultType,
+    symbol,
+    relatedSymbols,
+    type,
     labels,
     events,
   };

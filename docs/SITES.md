@@ -37,6 +37,12 @@ Template for each site:
 ## 2. GlobeNewswire
 - **Start URLs:** `/en/search/date/24HOURS?pageSize=10&page=1`, `/en/search/subject/prs`
 - **Notes:** the start URL only covers 24 hours, so a different route is needed for 14 days (paging the subject search, or a date-range search). **(hypothesis)**
+- **Found in Phase 3 (fetching eval fixtures, 2026-11-25):**
+  - Node's `fetch` (our `fetchHttp`, Chrome User-Agent) gets **200** on search pages, the RSS feed and article pages. **curl gets 403** "Access Denied" from Akamai (`errors.edgesuite.net`) on the same URLs with the same User-Agent, so the block is on the client fingerprint, not the headers.
+  - Keyword search works: `/en/search/keyword/<words>?pageSize=20` lists releases newest first (links `a[href*="/news-release/"]`). Quoted phrases narrow it.
+  - RSS: `/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies` → 200.
+  - **Article selectors:** body `[itemprop="articleBody"]`; publish time `meta[property="og:article:published_time"]` (not `article:published_time`, so the default selector misses it); og:title/og:image/canonical present. Datelines look like `NEW YORK, Nov. 24, 2026 (GLOBE NEWSWIRE) --`.
+  - Tables come out as `a | b | c` rows, and financial tables are often "in thousands" (D37).
 
 ## 3. Fox Business
 - **Start URLs:** /markets, /category/stocks
@@ -72,6 +78,7 @@ Template for each site:
 | 2026-11-23 | `/feed/?paged=3&x=1` (cache-buster) | **429**, Cloudflare "Just a moment…" challenge page | never add unknown params to this site's URLs |
 | 2026-11-23 | `/wp-json/wp/v2/posts?per_page=100&page=2` | 200 JSON, 100 posts, `cf-cache-status: MISS` | used for paging back (D27) |
 | 2026-11-23 | `/sitemap_index.xml`, `/page/2/` | 200 (Yoast sitemap index; HTML archive page) | not used: only `lastmod` / no machine-readable dates |
+| 2026-11-25 | `CACHE=1` run on a mobile hotspot: 19 article pages not in the cache yet | **403** on all 19 (the 235 cached pages weren't fetched); feed and REST API still 200 | written with `fullText: null`, reason `blocked` (D31). Likely the hotspot IP; retry from the usual network before Phase 5 (D13 step 4) |
 
 ## 7. Newsfile
 - **Start URLs:** Last25Stories feed, the homepage
@@ -84,6 +91,11 @@ Template for each site:
 ## 9. Business Wire
 - **Start URLs:** /newsroom
 - **Notes:** may be bot-protected. **(hypothesis)**
+- **Blocking log:**
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-25 | `/newsroom` with curl (Chrome UA) and with our `fetchHttp` (Node fetch) | **403** "Access Denied" (Akamai) on both | blocked for plain HTTP; Phase 4 tries the ladder (D13). Its eval fixture slots went to GlobeNewswire |
 
 ## 10. Reuters
 - **Start URLs:** /business/, /markets/

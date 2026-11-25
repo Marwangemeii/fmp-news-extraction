@@ -8,10 +8,11 @@ import { discoverRss } from './discover-rss.js';
 import { discoverWpJson } from './discover-wp-json.js';
 import { extractHtml } from './extract-html.js';
 import { labelPlaceholder } from './label-placeholder.js';
+import { labelLlm } from './label-llm.js';
 
 export const registry = {
   fetchers: { http: fetchHttp },
   discoverers: { rss: discoverRss, 'wp-json': discoverWpJson },
   extractors: { html: extractHtml },
-  labellers: { placeholder: labelPlaceholder },
+  labellers: { placeholder: labelPlaceholder, llm: labelLlm },
 };
