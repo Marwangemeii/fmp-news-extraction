@@ -14,9 +14,11 @@ import { CLASSIFY_SYSTEM, EXTRACT_SYSTEM, topOfBody, classifyMessage, extractMes
 import { CLASSIFY_SCHEMA, EXTRACT_SCHEMA } from '../llm/schemas.js';
 import { callJson } from '../llm/client.js';
 import { prefilter } from '../lib/prefilter.js';
-import { evidenceInText, rawInEvidence, inArticleOrder } from '../lib/checks.js';
+import { evidenceInText, evidenceInOpening, rawInEvidence, inArticleOrder } from '../lib/checks.js';
 import { parseMoney, parsePerShare, parseShares, parseDate, parseRatio, parsePeriod, parseFiscalYear, asText } from '../lib/convert.js';
-import { normalizeExchange } from '../lib/symbols.js';
+import { normalizeExchange, resolveSymbols, isUsExchange } from '../lib/symbols.js';
+import { typeOf } from '../lib/type.js';
+import { parseTime, timeFromPublishTime, etParts } from '../lib/time.js';
 
 const LABEL_ORDER = ['earnings', 'dividends', 'splits', 'ipos'];
 
@@ -40,38 +42,58 @@ export async function labelLlm(article, entry, ctx = {}) {
     classify: null,
     extract: null,
     values: [],
-    symbol: { value: null, rule: 'symbol rule comes in M2' },
-    type: { value: entry.defaultType, rule: 'entry.defaultType (type rule comes in M2)' },
+    symbol: null,
+    type: null,
     result: null,
     llmError: null,
     calls: [], // one per LLM call: { stage, model, fromCache, inputTokens, outputTokens, costUsd }
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
   };
-  const base = { symbol: null, relatedSymbols: [], type: entry.defaultType };
+  // A press release is the company's own announcement: K11 (opening rule) doesn't apply to it (D44).
+  const pressRelease = entry.defaultType === 'pressReleases';
+  let base = { symbol: null, relatedSymbols: [], type: entry.defaultType };
+  let usListing = false;
+  /** Symbol (K7, D46) + type (D47), from the classifier's answer or, with none, from the regex alone. */
+  const setSymbols = (proposed) => {
+    const s = resolveSymbols(article, proposed);
+    trace.symbol = s.trace;
+    trace.type = typeOf(entry, s.symbol);
+    base = { symbol: s.symbol, relatedSymbols: s.relatedSymbols, type: trace.type.value };
+    usListing = isUsExchange(s.exchange);
+  };
   const others = (why) => {
     trace.result = { labels: ['others'], why };
     return { ...base, labels: ['others'], events: [], trace };
   };
 
-  if (!article.fullText) return others('fullText is null: nothing to check evidence against, no LLM call');
+  if (!article.fullText) {
+    setSymbols(null);
+    return others('fullText is null: nothing to check evidence against, no LLM call');
+  }
   trace.prefilter = prefilter(article);
-  if (!trace.prefilter.pass) return others('pre-filter: no earnings/dividend/split/IPO vocabulary, no LLM call');
+  if (!trace.prefilter.pass) {
+    setSymbols(null);
+    return others('pre-filter: no earnings/dividend/split/IPO vocabulary, no LLM call');
+  }
 
   // ---- 1. Classify: the top of the body is enough to tell what the article is about.
   const top = topOfBody(article.fullText);
   trace.classifyInput = { bodyChars: top.bodyChars, sentChars: top.sentChars, truncated: top.truncated };
   const c = await call({
     model: MODELS.classify, effort: EFFORT.classify, maxTokens: MAX_TOKENS.classify,
-    system: CLASSIFY_SYSTEM, user: classifyMessage(article, top.text), schema: CLASSIFY_SCHEMA,
+    system: CLASSIFY_SYSTEM, user: classifyMessage(article, top.text, pressRelease), schema: CLASSIFY_SCHEMA,
     url: article.url, cache, spend,
   });
   trace.classify = stageTrace('classify', MODELS.classify, c, trace);
   if (c.error) {
     trace.llmError = { stage: 'classify', ...c.error };
+    setSymbols(null);
     return others(`LLM ${c.error.kind} in classify: labelled others, see llmError`);
   }
+  setSymbols(c.json); // before the labels: an `others` article still gets its symbol
 
   // ---- 2. K4: a label stays only if the sentence proving it is in the article word for word.
+  //         K11 (news only): and only if that sentence is in the opening paragraphs, where the subject is.
   const kept = [];
   const labelChecks = [];
   for (const { label, evidence } of c.json.labels) {
@@ -80,16 +102,25 @@ export async function labelLlm(article, entry, ctx = {}) {
       continue;
     }
     const k1 = evidenceInText(evidence, article.fullText);
-    labelChecks.push({ label, evidence, evidenceInFullText: k1.ok, kept: k1.ok, ...(k1.ok ? {} : { reason: k1.reason }) });
-    if (k1.ok) kept.push({ label, evidence });
+    const k11 = k1.ok && !pressRelease ? evidenceInOpening(evidence, article.fullText) : null;
+    const ok = k1.ok && (k11?.ok ?? true);
+    labelChecks.push({
+      label, evidence, evidenceInFullText: k1.ok, ...(k11 ? { inOpening: k11.ok } : {}), kept: ok,
+      ...(ok ? {} : { reason: k1.ok ? k11.reason : k1.reason }),
+    });
+    if (ok) kept.push({ label, evidence });
   }
   trace.classify.labelChecks = labelChecks;
   trace.classify.labelsDroppedByEvidence = labelChecks.filter((x) => x.evidenceInFullText === false).length;
+  trace.classify.labelsDroppedNotInOpening = labelChecks.filter((x) => x.inOpening === false).length;
   if (kept.length === 0) {
-    return others(labelChecks.length ? 'every proposed label failed its evidence check (K4)' : 'the classifier proposed no label');
+    return others(labelChecks.length
+      ? 'every proposed label failed its evidence check (K4) or the opening check (K11), see classify.labelChecks'
+      : 'the classifier proposed no label');
   }
   kept.sort((a, b) => LABEL_ORDER.indexOf(a.label) - LABEL_ORDER.indexOf(b.label));
   const labels = kept.map((k) => k.label);
+  const eventCtx = { article, trace, symbol: base.symbol, type: base.type, usListing };
 
   // ---- 3. Extract: the full article, only for the proven labels.
   const x = await call({
@@ -99,13 +130,17 @@ export async function labelLlm(article, entry, ctx = {}) {
   });
   trace.extract = stageTrace('extract', MODELS.extract, x, trace);
   if (x.error) {
+    // The labels are proven (K4/K11) without the extractor, so they stay; every field is null (D38 amended).
     trace.llmError = { stage: 'extract', ...x.error };
-    return others(`LLM ${x.error.kind} in extract: proven labels [${labels}] not written, see llmError`);
+    const missing = `extract failed (${x.error.kind}): all fields null, see llmError`;
+    const events = kept.map(({ label, evidence }) => buildEvent(label, null, evidence, eventCtx, missing));
+    trace.result = { labels, why: `LLM ${x.error.kind} in extract: proven labels kept, every event field null` };
+    return { ...base, labels, events, trace };
   }
 
   // ---- 4. Convert + check every value, one event per label (K6).
   const byLabel = nest(x.json, trace);
-  const events = kept.map(({ label, evidence }) => buildEvent(label, byLabel[label], evidence, article, trace, base.symbol));
+  const events = kept.map(({ label, evidence }) => buildEvent(label, byLabel[label], evidence, eventCtx));
   trace.result = {
     labels,
     nullValues: trace.values.filter((v) => v.raw !== null && v.value === null).length,
@@ -191,11 +226,16 @@ function prove(field, v, conv, c, extra = {}) {
   return r.value;
 }
 
-/** One event for one proven label. `data` is the extractor's object for that label (or null). */
-function buildEvent(label, data, labelEvidence, article, trace, symbol) {
-  const c = { article, trace, evidences: [labelEvidence] };
+/**
+ * One event for one proven label. `data` is the extractor's object for that label (or null).
+ * @param {{ article: object, trace: object, symbol: string|null, type: string, usListing: boolean }} ctx
+ * @param {string} [missing] why `data` is null, for the trace
+ */
+function buildEvent(label, data, labelEvidence, ctx, missing = 'the extractor returned no event for this label: all fields null') {
+  const { article, trace, symbol } = ctx;
+  const c = { ...ctx, evidences: [labelEvidence] };
   const date = (raw) => parseDate(raw, { publishedDate: article.publishedDate });
-  if (!data) trace.values.push({ field: label, value: null, reason: 'the extractor returned no event for this label: all fields null' });
+  if (!data) trace.values.push({ field: label, value: null, reason: missing });
   const d = data ?? {};
   const f = (name, conv) => prove(`${label}.${name}`, d[name], conv, c);
 
@@ -240,11 +280,7 @@ function earningsFields(d, c, f, date) {
     period: f('period', parsePeriod),
     fiscalDateEnding: f('fiscalDateEnding', date),
     date: f('date', date),
-    time: null,
-    timeExact: null,
   };
-  // D11 time conversion comes in M2; the raw text is already in the trace.
-  c.trace.values.push({ field: 'earnings.time', raw: known(d.time?.raw) ?? null, evidence: known(d.time?.evidence) ?? null, value: null, reason: 'time is converted in M2' });
 
   // Every EPS/revenue figure is proven on its own; then D12 picks which one fills each field.
   const figures = (d.figures ?? []).map((fig, i) => {
@@ -257,13 +293,46 @@ function earningsFields(d, c, f, date) {
       perShare: known(fig.perShare),
     };
     const value = prove(`earnings.figures[${i}]`, fig, conv, c, meta);
-    return { i, ...meta, raw: fig.raw, value };
+    return { i, ...meta, raw: fig.raw, evidence: fig.evidence, value };
   });
   const proven = figures.filter((x) => x.value !== null);
   return {
     ...fields,
+    ...earningsTime(d.time, fields.date, proven, c),
     ...pickFigures(proven, fields.period, c.trace),
+    // R-J4 / D12: every proven figure, classified. Each evidence line passed K1.
+    figures: proven.map(({ metric, value, period, basis, kind, perShare, evidence }) => ({ metric, value, period, basis, kind, perShare, evidence })),
   };
+}
+
+/**
+ * D11 + D48: `time` and `timeExact`.
+ * 1. The release time stated in the article (wording or a clock time), proven like any value.
+ * 2. Otherwise the press-release rule: a company's own results release (type pressReleases, US listing,
+ *    at least one proven actual figure, results dated the publish day or undated) → its publish time in ET.
+ *    A news article's publish time is never used. timeExact stays null: the time isn't stated.
+ * 3. Otherwise null.
+ */
+function earningsTime(v, date, proven, c) {
+  const stated = prove('earnings.time', v, (raw) => parseTime(raw, { date, usListing: c.usListing }), c);
+  if (stated) return stated;
+
+  const why = [];
+  if (c.type !== 'pressReleases') why.push('not a press release');
+  if (!c.usListing) why.push('no proven US listing');
+  if (!proven.some((x) => x.kind === 'actual')) why.push('no proven actual figure (not a results release)');
+  const publishDay = etParts(c.article.publishedDate).date;
+  if (date && date !== publishDay) why.push(`results date ${date} is not the publish day ${publishDay} (ET)`);
+  const t = { field: 'earnings.time (publish time)', value: null };
+  c.trace.values.push(t);
+  if (why.length) {
+    t.reason = `press-release rule not applied: ${why.join('; ')}`;
+    return { time: null, timeExact: null };
+  }
+  const r = timeFromPublishTime(c.article.publishedDate);
+  t.value = r.value;
+  t.rule = `D11 ${r.rule}`;
+  return { time: r.value, timeExact: null };
 }
 
 /** The extract schema has no nulls (API limit on nullable fields): "", "unknown" and "none" mean not stated. */

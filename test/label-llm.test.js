@@ -41,7 +41,7 @@ function flat(nested) {
 }
 
 /** A fake `callJson`: answers classify and extract from canned JSON, and records the calls. */
-function fakeLlm({ classify, extract: nestedExtract, classifyError }) {
+function fakeLlm({ classify, extract: nestedExtract, classifyError, extractError }) {
   const extract = nestedExtract ? flat(nestedExtract) : undefined;
   const calls = [];
   const call = async (req) => {
@@ -49,6 +49,7 @@ function fakeLlm({ classify, extract: nestedExtract, classifyError }) {
     calls.push({ stage, user: req.user });
     const usage = { inputTokens: 100, outputTokens: 10 };
     if (stage === 'classify' && classifyError) return { usage, fromCache: false, contentHash: 'h', error: classifyError };
+    if (stage === 'extract' && extractError) return { usage, fromCache: false, contentHash: 'h', error: extractError };
     return { json: stage === 'classify' ? classify : extract, usage, stopReason: 'end_turn', fromCache: false, contentHash: 'h' };
   };
   return { call, calls };
@@ -98,12 +99,16 @@ test('earnings: values proven and converted; D12 picks GAAP diluted; a hallucina
         { label: 'earnings', evidence: 'NEW YORK, Nov. 5, 2026 -- Acme Corp. (NASDAQ: ACME) today reported financial results for its third quarter ended September 30, 2026.' },
         { label: 'dividends', evidence: 'The board declared a quarterly dividend of $0.10 per share.' }, // not in the article
       ],
-      symbol: { ticker: 'ACME', exchange: 'NASDAQ', evidence: '…' },
+      symbol: { ticker: 'ACME', exchange: 'NASDAQ', evidence: 'NEW YORK, Nov. 5, 2026 -- Acme Corp. (NASDAQ: ACME) today reported financial results for its third quarter ended September 30, 2026.' },
       relatedSymbols: [],
     },
     extract: EARNINGS_EXTRACT,
   });
   const r = await labelLlm(article, entry, { call });
+  assert.equal(r.symbol, 'ACME'); // K7: ticker + exchange in a sentence of the article
+  assert.deepEqual(r.relatedSymbols, ['ACME']);
+  assert.equal(r.type, 'pressReleases');
+  assert.match(calls[0].user, /^<source>press release<\/source>/);
 
   assert.deepEqual(r.labels, ['earnings']); // dividends dropped by K4
   assert.match(calls[1].user, /Extract these event types: earnings$/);
@@ -130,6 +135,71 @@ test('earnings: values proven and converted; D12 picks GAAP diluted; a hallucina
   assert.match(est.reason, /not found in fullText/);
   assert.match(r.trace.values.find((x) => x.field === 'earnings.epsActual').rule, /GAAP.*skipped.*adjusted/);
   assert.equal(r.trace.usage.inputTokens, 200);
+
+  // D11 press-release rule: own release, US listing, results reported → publish time 16:05 ET → amc.
+  assert.equal(e.time, 'amc');
+  assert.equal(e.timeExact, null); // no time is stated in the text
+  // R-J4: every proven figure is in the output, classified; the invented one is not.
+  assert.deepEqual(e.figures.map((f) => [f.metric, f.value, f.basis, f.kind]), [
+    ['revenue', 412500000, null, 'actual'], ['eps', 0.57, 'adjusted', 'actual'], ['eps', 0.42, 'GAAP', 'actual'], ['eps', 0.3, 'GAAP', 'previous'],
+  ]);
+});
+
+test('extract fails → the proven labels stay, with all-null events and llmError (D38 amended)', async () => {
+  const sentence = 'NEW YORK, Nov. 5, 2026 -- Acme Corp. (NASDAQ: ACME) today reported financial results for its third quarter ended September 30, 2026.';
+  const { call } = fakeLlm({
+    classify: { labels: [{ label: 'earnings', evidence: sentence }], symbol: null, relatedSymbols: [] },
+    extractError: { kind: 'truncated', message: 'stop_reason max_tokens' },
+  });
+  const r = await labelLlm(article, entry, { call });
+  assert.deepEqual(r.labels, ['earnings']);
+  assert.equal(r.events.length, 1);
+  assert.equal(r.events[0].evidence, sentence);
+  assert.equal(r.events[0].epsActual, null);
+  assert.deepEqual(r.events[0].figures, []);
+  assert.equal(r.trace.llmError.stage, 'extract');
+  assert.match(r.trace.result.why, /labels kept/);
+});
+
+test('K11: on a news site a label sentence past the opening paragraphs is dropped; on a wire it is kept', async () => {
+  const text = ['Bitcoin fell 3% on Monday.', 'Traders watched the Fed.', 'Ether was flat.', 'Separately, Gamma Ltd. priced its initial public offering at $15.00 per share.'].join('\n\n');
+  const deep = 'Separately, Gamma Ltd. priced its initial public offering at $15.00 per share.';
+  const answers = { classify: { labels: [{ label: 'ipos', evidence: deep }], symbol: null, relatedSymbols: [] }, extract: { ipos: {} } };
+
+  const news = await labelLlm({ ...article, fullText: text }, { name: 'Fake Crypto', defaultType: 'crypto' }, { call: fakeLlm(answers).call });
+  assert.deepEqual(news.labels, ['others']);
+  assert.equal(news.trace.classify.labelChecks[0].reason, 'not in opening (first 3 paragraphs)');
+  assert.equal(news.trace.classify.labelsDroppedNotInOpening, 1);
+
+  const wire = await labelLlm({ ...article, fullText: text }, entry, { call: fakeLlm(answers).call });
+  assert.deepEqual(wire.labels, ['ipos']);
+});
+
+test('symbol: a ticker the article never writes fails K7 → null; general news with a proven symbol → stock', async () => {
+  const text = 'Nvidia reported third quarter revenue of $115.8 billion on Tuesday.\n\nShares of Acme (NYSE: ACM) rose.';
+  const general = { name: 'Fake News', defaultType: 'general' };
+  const ask = (symbol) => fakeLlm({ classify: { labels: [], symbol, relatedSymbols: [] } }).call;
+
+  const invented = await labelLlm({ ...article, fullText: text }, general, { call: ask({ ticker: 'NVDA', exchange: 'NASDAQ', evidence: 'Nvidia reported third quarter revenue of $115.8 billion on Tuesday.' }) });
+  assert.equal(invented.symbol, null);
+  assert.match(invented.trace.symbol.related[0].reason, /K7: ticker "NVDA" not in its sentence/);
+  assert.equal(invented.type, 'general');
+  assert.deepEqual(invented.relatedSymbols, ['ACM']); // the regex still finds the written one
+
+  const real = await labelLlm({ ...article, fullText: text }, general, { call: ask({ ticker: 'ACM', exchange: null, evidence: 'Shares of Acme (NYSE: ACM) rose.' }) });
+  assert.equal(real.symbol, 'ACM');
+  assert.equal(real.type, 'stock');
+});
+
+test('time stated in the text wins over the publish time: wording → amc, clock time → timeExact', async () => {
+  const text = 'Acme Corp. (NASDAQ: ACME) will report third quarter results after the market closes on December 11, 2026, at 4:05 p.m. ET.';
+  const { call } = fakeLlm({
+    classify: { labels: [{ label: 'earnings', evidence: text }], symbol: { ticker: 'ACME', exchange: 'NASDAQ', evidence: text }, relatedSymbols: [] },
+    extract: { earnings: { date: v('December 11, 2026', text), time: v('after the market closes on December 11, 2026, at 4:05 p.m. ET', text) } },
+  });
+  const r = await labelLlm({ ...article, fullText: text }, entry, { call });
+  assert.equal(r.events[0].time, 'amc');
+  assert.equal(r.events[0].timeExact, '2026-12-11T21:05:00.000Z'); // 16:05 EST = 21:05 UTC
 });
 
 test('every proposed label fails its evidence check → others', async () => {
@@ -256,7 +326,7 @@ test('D12: no proven event period and figures for several periods → null, neve
     classify: { labels: [{ label: 'earnings', evidence: 'Fourth quarter GAAP diluted EPS of $0.84.' }], symbol: null, relatedSymbols: [] },
     extract: {
       earnings: {
-        period: v('fourth quarter', 'Fourth quarter GAAP diluted EPS of $0.84.'), // wrong case → fails K2 → no proven period
+        period: v('Q4', 'Fourth quarter GAAP diluted EPS of $0.84.'), // "Q4" isn't in its sentence → fails K2 → no proven period
         figures: [fig('', '$2.62', 'Fiscal 2026 GAAP diluted EPS of $2.62.'), fig('Fourth quarter', '$0.84', 'Fourth quarter GAAP diluted EPS of $0.84.')],
       },
     },

@@ -88,6 +88,8 @@ test('parseRatio: N-for-M = N new shares for M old (R-E6)', () => {
 
 test('parsePeriod: quarters and full year; halves refused', () => {
   assert.equal(v(parsePeriod('third quarter')), 'Q3');
+  assert.equal(v(parsePeriod('Fiscal 2026')), 'FY'); // a fiscal year alone = the full year
+  assert.equal(v(parsePeriod('same quarter of fiscal 2025')), null); // which quarter isn't written
   assert.equal(v(parsePeriod('Q3')), 'Q3');
   assert.equal(v(parsePeriod('3Q')), 'Q3');
   assert.equal(v(parsePeriod('fourth-quarter')), 'Q4');

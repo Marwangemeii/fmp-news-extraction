@@ -254,6 +254,9 @@ export function parsePeriod(raw) {
   if (/\b(full[\s-]year|fiscal year|fy(?:\d{2}|\d{4})?|annual|twelve months|12 months|year[\s-]end(?:ed)?)\b/.test(s)) {
     return ok('FY', `parsePeriod: "${raw}" → FY`);
   }
+  // "Fiscal 2026" on its own names the whole fiscal year, like "FY2026". Only the whole text:
+  // "same quarter of fiscal 2025" names no quarter, so it stays null.
+  if (/^fiscal\s+(\d{4}|\d{2})$/.test(s.trim())) return ok('FY', `parsePeriod: "${raw}" (a fiscal year alone) → FY`);
   return fail(`no fiscal period found in "${raw}"`);
 }
 

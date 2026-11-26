@@ -106,6 +106,8 @@ export function newLlmStats() {
     // K4: labels the classifier proposed vs. dropped because their sentence wasn't in the article.
     labelsProposed: 0,
     labelsDropped: 0,
+    // K11: labels on news articles dropped because their sentence wasn't in the opening paragraphs (D44).
+    labelsNotInOpening: 0,
   };
 }
 
@@ -131,6 +133,7 @@ function countTrace(llm, trace) {
   const checks = trace.classify?.labelChecks ?? [];
   llm.labelsProposed += checks.length;
   llm.labelsDropped += checks.filter((x) => x.evidenceInFullText === false).length;
+  llm.labelsNotInOpening += checks.filter((x) => x.inOpening === false).length;
 }
 
 /**
@@ -251,7 +254,7 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s, sp
   console.log(
     `[${entry.name}] labels ${JSON.stringify(s.labels)} · pre-filter passed ${l.prefilterPassed}/${articles.length}` +
       ` · LLM calls ${l.calls} (cached ${l.cacheHits}) · ${l.inputTokens} in / ${l.outputTokens} out · $${l.costUsd.toFixed(4)}` +
-      ` · labels dropped by evidence check ${l.labelsDropped}/${l.labelsProposed}` +
+      ` · labels dropped: evidence (K4) ${l.labelsDropped}, not in opening (K11) ${l.labelsNotInOpening}, of ${l.labelsProposed}` +
       `${s.llmErrorUrls.length ? ` · LLM errors ${JSON.stringify(l.llmErrors)}` : ''}`,
   );
   return { records, traces };

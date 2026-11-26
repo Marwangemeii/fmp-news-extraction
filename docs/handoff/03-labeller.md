@@ -144,3 +144,169 @@ LLM_EXTRACT_MODEL=claude-sonnet-5-5 npm run eval    # M2: model comparison (~$0.
 
 ## 10. Suggested next step
 M2: `symbols.js` (K7 ticker-in-text, regex fallback, FMP suffix table), the `type` rule, `figures[]` in the output, `parseTime` + timeExact (D11), the eval on those fields, and `LLM_EXTRACT_MODEL=claude-sonnet-5-5 npm run eval` for the model comparison. Decide items 1–4 above first, since they change prompts or rules and so the cached answers.
+
+---
+
+# M2 (2026-11-25): Marwan's decisions on M1, symbols, type, time, figures, model comparison
+
+## M2.1 Goal
+Put Marwan's answers to §9 items 1–4 into code (prompt v2), then build M2: `symbols.js` (K7, ticker regex, FMP suffix table), `type.js`, `figures[]` in the earnings event, `parseTime` + `timeExact` + the press-release rule, an extended eval, and Haiku vs Sonnet for extract.
+
+## M2.2 What was done
+- `src/lib/checks.js`: K2 ignores case (D45); `OPENING_PARAGRAPHS = 3`, `opening()`, `evidenceInOpening()` (K11, D44).
+- `src/lib/symbols.js`: `exchangeCode()`, `FMP_SUFFIX`, `toFmpSymbol()`, `findTickers()`, `proveTicker()` (K7), `resolveSymbols()` (D46). `normalizeExchange()` unchanged in behaviour.
+- `src/lib/type.js`: `typeOf(entry, symbol)` (D47).
+- `src/lib/time.js`: `parseTime()`, `timeFromPublishTime()`, `etParts()` (D48), using `Intl` with `America/New_York`.
+- `src/lib/convert.js`: `parsePeriod("fiscal 2026")` → `FY` (whole text only).
+- `src/blocks/label-llm.js`: order is now classify → symbols (K7) → type → K4 + K11 → extract; an extract failure keeps the labels with all-null events (D38 amended); `earningsTime()`; `figures[]` in the event.
+- `src/llm/prompts.js` + `config.js`: `PROMPT_VERSION = 'v2'`; classify gets `<source>news|press release</source>` and the opening rule; extract gets "evidence from the body only, never the title".
+- `src/publishers.js`: `defaultType: 'pressReleases'` on GlobeNewswire, Business Wire, Newsfile (still disabled).
+- `src/controller.js`, `src/run.js`: the `labelsNotInOpening` count.
+- `scripts/validate.js`: figure checks (enums, number, evidence in fullText), `timeExact` ISO check, the new wording for an extract failure.
+- `scripts/explain.js`: K11 marks, each proposed ticker with K7 ✔/✖ and its FMP rule, the regex tickers.
+- `scripts/eval.js`: symbol / relatedSymbols (as a set) / type; `time` + `timeExact`; key figures (found / mislabelled / missed); K11 count; output `output/eval-<classify>__<extract>.json`.
+- `test/fixtures/gold.json`: `_m2` removed; `timeExact: null` on all 7 earnings events; 21 key figures on fixtures 01, 02, 05, 12, 18 (DRAFT).
+- Tests: new `test/symbols.test.js` (7), `test/time.test.js` (5); `checks.test.js` (K2 case, K11), `label-llm.test.js` (+4: extract failure, K11 news vs wire, K7 + type, stated time). **71 tests** (54 before).
+
+## M2.3 How it works
+**Order in `labelLlm` (shortened):**
+```js
+const pressRelease = entry.defaultType === 'pressReleases';    // K11 doesn't apply to a company's own release
+const c = await call({ … user: classifyMessage(article, top.text, pressRelease) … });
+if (c.error) { …; setSymbols(null); return others(…); }       // no answer → regex fallback for the symbol
+setSymbols(c.json);                                            // resolveSymbols (K7) + typeOf, before the labels
+for (const { label, evidence } of c.json.labels) {
+  const k1 = evidenceInText(evidence, article.fullText);                                  // K4
+  const k11 = k1.ok && !pressRelease ? evidenceInOpening(evidence, article.fullText) : null; // K11
+  const ok = k1.ok && (k11?.ok ?? true);
+  …
+}
+const x = await call({ … extract … });
+if (x.error) {                                                 // D38 amended: labels proven, so they stay
+  trace.llmError = { stage: 'extract', ...x.error };
+  const events = kept.map(({ label, evidence }) => buildEvent(label, null, evidence, eventCtx, missing));
+  return { ...base, labels, events, trace };
+}
+```
+**K7 (`proveTicker`):**
+```js
+const k1 = evidenceInText(p.evidence, text);                    // the quoted sentence is in the article
+if (!new RegExp(`(^|[^A-Za-z0-9])${escapeRe(p.ticker)}($|[^A-Za-z0-9])`).test(ev)) → "ticker not in its sentence"
+if (p.exchange && !ev.toLowerCase().includes(p.exchange.toLowerCase()))               → "exchange not in its sentence"
+```
+**symbol rule:** the classifier's K7-proven main ticker; with no classifier answer, the first `(Exchange: TICKER)` in the opening; a classifier null or a K7 failure → null. relatedSymbols = proven classifier tickers ∪ regex tickers, main first.
+
+**time (`earningsTime`):**
+```js
+const stated = prove('earnings.time', v, (raw) => parseTime(raw, { date, usListing: c.usListing }), c);
+if (stated) return stated;                                     // wording → bmo/amc; "4:05 p.m. ET" + proven date → timeExact
+// press-release rule: pressReleases + US listing + a proven actual figure + results dated the publish day (ET) or undated
+const r = timeFromPublishTime(c.article.publishedDate);        // 16:15 ET → amc; 12:48 ET → null (market hours)
+return { time: r.value, timeExact: null };
+```
+**A figure in the output event:**
+```json
+{ "metric": "eps", "value": 0.84, "period": "Q4", "basis": "GAAP", "kind": "actual", "perShare": "diluted",
+  "evidence": "Fourth quarter GAAP diluted net EPS of $0.84, inclusive of tariff refunds, and flat from the prior year period" }
+```
+
+## M2.4 Decisions (all in `docs/DECISIONS.md`)
+- **D44** K11 subject rule, **news only** (Marwan chose this at plan review after seeing that 3 paragraphs everywhere drops HP's and CMB.TECH's dividends).
+- **D45** evidence from the body only; K2 ignores case, K1 stays exact.
+- **D38 amended:** an extract failure keeps the proven labels with all-null events.
+- **D46** symbols: K7, the regex, the FMP suffix table (**unverified** apart from .L/.DE/.MI: FMP's docs site returned 403), `-` for share classes.
+- **D47** type rule. **D48** time/timeExact + the press-release rule. **D49** figures in the output + key-figure scoring. **D50** Haiku stays for extract.
+- Open questions on symbol/type for non-LLM articles and on the type rule: closed.
+
+## M2.5 Deviations
+- **K11 applies to news only**, not to every article as first decided: Marwan's choice at plan review (data above).
+- **`parsePeriod("fiscal 2026")` → FY:** a converter gap the figures eval exposed (9 figures had `period: null`).
+- **Gold changes:** key figures added (new), and the two IES "same quarter of fiscal 2025" previous figures accept a null period (the text doesn't name the quarter).
+- **FMP suffixes not verified** (403 on FMP's docs). Needs an FMP API key or FMP's confirmation.
+
+## M2.6 Requirements covered
+- **R-A10** (T + eval): `test/symbols.test.js`; eval symbol 19/19. **R-J5** (eval): relatedSymbols 19/19 (as sets). **R-A11** (V + eval): type 19/19.
+- **R-J3** (T + eval): `test/time.test.js`; eval `time` 7/7, `timeExact` 7/7. **R-J4** (V + eval): figures in the output, validator checks them, key figures 20/21.
+- **R-L1** (eval + stats): K11 count. **R-E1** (V): figure evidence checked too. **R-E10**: still **0 wrong values**.
+
+## M2.7 How to verify
+```
+npm test                                         # 71 pass
+$env:CACHE=1; $env:LLM_BUDGET_USD=1; npm start   # both sites; v2 answers are now in .cache/llm/
+npm run validate                                 # PASS, 0 failures
+npm run eval -- --verbose                        # cached, $0
+$env:LLM_EXTRACT_MODEL='claude-sonnet-5-5'; npm run eval   # cached now, $0
+npm run explain -- anthropic-reportedly-prices-ipo
+npm run explain -- 2026/11/19/nvidia-ceo-jensen-huangs-affair
+```
+
+## M2.8 Results (2026-11-25)
+- `npm test`: **71 passed**, 0 failed.
+- **Eval before / after (19 fixtures, Haiku/Haiku):**
+
+| | before (v1, M1) | after (v2, M2) |
+|---|---|---|
+| exact label set | 17/19 | 17/19 (same two: VitaCig `dividends`, the CryptoPotato opinion piece `ipos`) |
+| K4 / K11 drops | 0/20 / – | 0/21 / 0/21 |
+| fields correct / **wrong** / missed | 104 / **0** / 12 | 126 / **0** / 4 (more fields scored: time, timeExact) |
+| symbol / relatedSymbols / type | – | 19/19 · 19/19 · 19/19 |
+| time / timeExact | – | 7/7 · 7/7 |
+| key figures | – | 20 found, 1 mislabelled (Nvidia revenue: no period), 0 missed of 21 |
+
+  M1 misses now fixed: T3 period/year (body-only evidence), HP period (K2 case) → HP EPS + revenue, INLIF ratio, QNB declaration date. Still missed: HP `fiscalDateEnding` (only in a table header), CMB.TECH revenue (table "in thousands", refused by D37 on purpose), Nvidia `period` + `calendarYear` (not extracted).
+- **Haiku vs Sonnet (extract):** same 126 / 0 / 4; key figures 20 vs 21; extract cost ~$0.03 vs **$0.39** → Haiku stays (D50).
+- **Run, TechCrunch + CryptoPotato (CACHE=1, LLM_BUDGET_USD=1):** 503 articles (TechCrunch 248, CryptoPotato 255); pre-filter passed 216; 228 LLM calls, 622,793 in / 47,143 out, **~$0.086**; **LLM errors 0**; labels dropped K4 0, **K11 1**, of 18 proposed.
+  - Labels: TechCrunch earnings 2, ipos 5 (M1: 5, 6); CryptoPotato earnings 4, ipos 6 (M1: 4, 10). Labelled articles 26 → 17. Most of the drop comes from the v2 classify prompt (news: sentence from the first three paragraphs or no label); the K11 code check dropped 1 (the Jensen Huang scandal timeline, whose earnings sentence is deep in the article: correct).
+  - Types: TechCrunch general 246, stock 2; CryptoPotato crypto 255. 13 articles have a symbol, 25 have relatedSymbols.
+- `npm run validate`: **PASS**, 0 failures, 24 warnings (22 R-A9: CryptoPotato 403 on uncached pages; 2 R-A7: video posts).
+- **Spend this session:** eval Haiku $0.040 + eval Sonnet $0.389 + run $0.086 = **~$0.51**. Total so far ~$0.72 of $10.
+
+**Trace 1 (TechCrunch IPO, symbol + type):**
+```
+classify    claude-haiku-5-5 · from cache (was 2633 in / 738 out) · stop end_turn
+  ✔ ipos       "Anthropic has priced its long-awaited IPO at $83 per share, above its initial range of $7…" [K11 in opening]
+  ✔ main ANT (Nasdaq)          → ANT            "ANT" on "Nasdaq" → NASDAQ → ANT
+extract     claude-haiku-5-5 · from cache (was 3671 in / 1792 out) · stop end_turn
+  ✖ ipos.firstTradingDate      "Thursday"                       → null           conversion failed: no date found in "Thursday"
+  ✔ ipos.pricePerShare         "$83"                            → 83             parsePerShare: "83" → 83 (USD?)
+result      ["ipos"]
+symbol      ANT  the classifier's main ticker, proven by K7
+type        stock  general-news publisher + a proven main symbol (ANT) → stock
+```
+**Trace 2 (K11 drop):**
+```
+The unfolding Jensen Huang scandal: a timeline
+classify    claude-haiku-5-5 · 3581 in / 99 out · stop end_turn
+            body cut for classify: 5918 of 17218 chars
+  ✖ earnings   "Nvidia reported its quarterly earnings on Tuesday, which beat Wall Street expectations wi…"  → dropped: not in opening (first 3 paragraphs)
+result      ["others"]  (every proposed label failed its evidence check (K4) or the opening check (K11), see classify.labelChecks)
+symbol      null  the classifier found no single main company with a written ticker: null
+```
+
+## M2.9 Known issues / open questions
+1. **K7 is per sentence.** A CryptoPotato story writes "…on Nasdaq tomorrow, November 19. This will happen under the ticker ANT": the exchange is in the previous sentence, so K7 rejects it → symbol null (not wrong). Option: when the exchange isn't in the ticker's sentence, accept the ticker with no exchange (= no suffix). Safe for US tickers, wrong for non-US ones. Needs Marwan's call.
+2. **FMP suffixes unverified** except .L/.DE/.MI (FMP docs: 403). One `search-symbol` call per suffix with an FMP key would settle it.
+3. **Label precision on the two open fixtures** is unchanged: VitaCig (`dividends` on a share-dividend spin-off) and the CryptoPotato opinion piece (its IPO sentence *is* in the opening, so K11 can't catch it). The gold for 11, 12 and 19 still needs Marwan's call (M1 item 5).
+4. **News articles mostly write no ticker** (TechCrunch's Anthropic stories), so `symbol` is null for them by rule. A name → ticker lookup (FMP search) would be a production option, kept out (it isn't stated in the article).
+5. **Gold is still DRAFT**, now including the 21 key figures. CryptoPotato 403 on new pages is unchanged (M1 item 6).
+
+## M2.10 Suggested next step
+Phase 4: Newsfile and GlobeNewswire first (the press-release rules, K11 exemption and ticker regex are built for them), then the rest in PLAN order.
+
+## M2.8b v1 → v2 label changes on the run (cache replay, $0)
+The committed v1 labeller was replayed from `.cache/llm/` (no API key, budget 0) on the same 503 articles: **25 labelled in v1, 17 in v2**. One article had no v1 answer cached (BitMine, `others` in v2). The 14 other v1 answers with labels whose URLs aren't in this run's output are eval fixtures.
+
+| # | title | publisher | v1 | v2 | v2 reason | v1 evidence ¶ |
+|---|---|---|---|---|---|---|
+| 1 | A tale of two Nvidias | TechCrunch | earnings | others | classify proposed no label | 0 |
+| 2 | Amazon and Google will together own nearly 30% of Anthropic after its IPO | TechCrunch | ipos | others | classify proposed no label | 3 |
+| 3 | Nebius tests the neocloud playbook with $40 billion in planned spending | TechCrunch | earnings | others | classify proposed no label | 0 |
+| 4 | SoftBank's billion-dollar loss may have put a cap on AI's natural gas ambitions | TechCrunch | earnings | others | classify proposed no label | 6 |
+| 5 | Short Traders Get Wrecked Too as Bitcoin Climbs Past $60K in Whipsaw Move | CryptoPotato | ipos | others | classify proposed no label | 2 |
+| 6 | Solana Beats Robinhood With 10x ANT Trades as Anthropic Stock Went Wild | CryptoPotato | ipos | others | classify proposed no label | 7 |
+| 7 | Bitcoin (BTC) Drops Under $64K, Pi Network (PI) Falls to New ATL: Market Watch | CryptoPotato | ipos | others | classify proposed no label | 5 |
+| 8 | Another Brutal Week Ahead for Bitcoin? 4 Catalysts Traders Can't Ignore | CryptoPotato | ipos | others | classify proposed no label | 1 |
+| 9 | 3 Surprising Factors Behind Bitcoin's Brutal $8K Weekly Drop | CryptoPotato | ipos | others | classify proposed no label | 10 |
+
+Added in v2: "Ripple CEO Sees Crypto Comeback After Anthropic IPO" (CryptoPotato), others → **ipos** (likely wrong: an opinion piece, like fixture 19).
+All 9 drops come from the v2 classify prompt. The K11 code check dropped one label (the Jensen Huang timeline, `others` in v1 too), and K4 dropped none. Assessment: 7 correct drops (passing mentions in recaps and an ownership story), #1 correct (analysis piece, R-L2), **#3 Nebius arguable** (its opening sentence is about the Q3 earnings call).

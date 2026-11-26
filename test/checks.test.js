@@ -1,9 +1,9 @@
 /**
- * The evidence checks (K1, K2): word for word, whitespace is the only thing normalized.
+ * The evidence checks (K1, K2, K11): K1 is word for word, whitespace is the only thing normalized.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evidenceInText, rawInEvidence, inArticleOrder, normalizeWs } from '../src/lib/checks.js';
+import { evidenceInText, evidenceInOpening, rawInEvidence, inArticleOrder, normalizeWs } from '../src/lib/checks.js';
 import { prefilter } from '../src/lib/prefilter.js';
 import { topOfBody } from '../src/llm/prompts.js';
 
@@ -30,6 +30,15 @@ test('K1: a paraphrase, a fixed typo or different quotes fail, with a reason', (
 test('K2: the raw value must be inside its evidence', () => {
   assert.equal(rawInEvidence('$0.42', 'Diluted EPS was $0.42, compared with $0.30.').ok, true);
   assert.equal(rawInEvidence('$0.43', 'Diluted EPS was $0.42, compared with $0.30.').ok, false);
+  // D45: K2 ignores case (K1 does not).
+  assert.equal(rawInEvidence('fourth quarter', 'Fourth quarter revenue rose.').ok, true);
+  assert.equal(evidenceInText('acme corp. reported revenue of $412.5 million.', FULL).ok, false);
+});
+
+test('K11: a sentence is in the opening only if it is in the first 3 paragraphs', () => {
+  const text = ['P1.', 'P2.', 'P3.', 'P4 deep mention.'].join('\n\n');
+  assert.equal(evidenceInOpening('P3.', text).ok, true);
+  assert.deepEqual(evidenceInOpening('P4 deep mention.', text), { ok: false, reason: 'not in opening (first 3 paragraphs)' });
 });
 
 test('inArticleOrder: unique lines, sorted by where they appear', () => {

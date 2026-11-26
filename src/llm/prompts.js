@@ -24,6 +24,11 @@ If none applies, return an empty "labels" list. The code then labels the article
 For each label, copy ONE sentence from the article BODY (not the title) that shows the event is the subject.
 Copy it character for character: same words, punctuation, capitalisation and numbers.
 Do not shorten, merge, paraphrase or fix typos. The code rejects any sentence it cannot find.
+Where the sentence comes from depends on the <source> line of the request:
+- news: copy it from the first three paragraphs of the body. If no sentence there shows the event,
+  the event is not the subject: do not give that label. The code rejects a sentence from further down.
+- press release (the company's own announcement): copy the sentence that announces the event,
+  wherever it is in the release.
 
 SYMBOLS
 - symbol: the ticker of the company the article is mainly about (in a merger, the larger company).
@@ -42,6 +47,8 @@ so follow these rules exactly.
    do arithmetic, or add a year that is not written.
 2. EVIDENCE. Every raw value comes with "evidence": the one sentence (or table row) it was
    copied from, copied character for character. raw must appear inside its evidence exactly.
+   Copy evidence from the article BODY only, never from the title: the code checks every
+   evidence sentence against the body and rejects the value if it is not there.
 3. NOT STATED = LEFT OUT. Return only values the article states. Never fill a value from your
    own knowledge or work it out from other values.
 4. NEGATIVE NUMBERS. Keep the parentheses or the word "loss" in raw: "(0.12)", "$(0.12)",
@@ -109,9 +116,13 @@ function articleBlock(article, body) {
   return `<article>\n<title>${article.title ?? ''}</title>\n<summary>${article.text ?? ''}</summary>\n<body>\n${body}\n</body>\n</article>`;
 }
 
-/** @param {{ title: string, text: string }} article  @param {string} body the (possibly cut) body */
-export function classifyMessage(article, body) {
-  return articleBlock(article, body);
+/**
+ * @param {{ title: string, text: string }} article
+ * @param {string} body the (possibly cut) body
+ * @param {boolean} pressRelease the article's type is pressReleases (K11 doesn't apply, D44)
+ */
+export function classifyMessage(article, body, pressRelease) {
+  return `<source>${pressRelease ? 'press release' : 'news'}</source>\n${articleBlock(article, body)}`;
 }
 
 /**

@@ -27,13 +27,31 @@ export function evidenceInText(evidence, text) {
 }
 
 /**
- * K2: the value as written is inside its own evidence.
+ * K2: the value as written is inside its own evidence. Case is ignored here (D45): the model writes
+ * "fourth quarter" for "Fourth quarter". K1 above stays exact, so the sentence itself is still verbatim.
  * @param {string} raw
  * @param {string} evidence
  */
 export function rawInEvidence(raw, evidence) {
-  if (normalizeWs(evidence).includes(normalizeWs(raw))) return { ok: true };
+  if (normalizeWs(evidence).toLowerCase().includes(normalizeWs(raw).toLowerCase())) return { ok: true };
   return { ok: false, reason: `"${raw}" not found in its evidence` };
+}
+
+/** How many paragraphs count as the article's opening (K11, D44). */
+export const OPENING_PARAGRAPHS = 3;
+
+/** The first `n` paragraphs of fullText (paragraphs are separated by a blank line, D29). */
+export const opening = (text, n = OPENING_PARAGRAPHS) => text.split('\n\n').slice(0, n).join('\n\n');
+
+/**
+ * K11 (D44): a news article's label sentence must be in its opening, where the subject is.
+ * Same exact match as K1, on the opening paragraphs only.
+ * @param {string} evidence
+ * @param {string} text fullText
+ */
+export function evidenceInOpening(evidence, text) {
+  if (evidenceInText(evidence, opening(text)).ok) return { ok: true };
+  return { ok: false, reason: `not in opening (first ${OPENING_PARAGRAPHS} paragraphs)` };
 }
 
 /** Where a failed sentence stops matching, to make the trace useful: "(first 12 of 20 words match)". */

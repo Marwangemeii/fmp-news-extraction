@@ -54,12 +54,15 @@ const stage = (name, s) => {
 stage('classify', t.classify);
 if (t.classifyInput?.truncated) console.log(`            body cut for classify: ${t.classifyInput.sentChars} of ${t.classifyInput.bodyChars} chars`);
 for (const c of t.classify?.labelChecks ?? []) {
-  console.log(`  ${c.kept ? '✔' : '✖'} ${pad(c.label, 10)} "${short(c.evidence)}"${c.kept ? '' : `  → dropped: ${c.reason}`}`);
+  const k11 = c.inOpening === undefined ? '' : c.inOpening ? ' [K11 in opening]' : '';
+  console.log(`  ${c.kept ? '✔' : '✖'} ${pad(c.label, 10)} "${short(c.evidence)}"${k11}${c.kept ? '' : `  → dropped: ${c.reason}`}`);
 }
-if (t.classify?.raw?.symbol) {
-  const s = t.classify.raw.symbol;
-  console.log(`  proposed symbol ${s.ticker} (${s.exchange ?? 'no exchange'}), related: ${(t.classify.raw.relatedSymbols ?? []).map((x) => x.ticker).join(', ') || 'none'}`);
+// Symbols: each ticker the classifier proposed (K7), then what the "(Exchange: TICKER)" regex found.
+for (const r of t.symbol?.related ?? []) {
+  const ex = r.exchange ? ` (${r.exchange})` : '';
+  console.log(`  ${r.symbol ? '✔' : '✖'} ${pad(`${r.role} ${r.ticker}${ex}`, 26)} → ${pad(show(r.symbol ?? null), 14)} ${r.symbol ? r.rule : r.reason}`);
 }
+if (t.symbol?.regex?.length) console.log(`  regex "(Exchange: TICKER)": ${t.symbol.regex.join(', ')}`);
 
 stage('extract', t.extract);
 for (const v of t.values ?? []) {
@@ -71,6 +74,6 @@ for (const v of t.values ?? []) {
 
 if (t.llmError) console.log(`\nLLM ERROR (${t.llmError.kind} in ${t.llmError.stage}): ${t.llmError.message}`);
 console.log(`\nresult      ${show(t.result?.labels)}${t.result?.why ? `  (${t.result.why})` : ''}`);
-console.log(`symbol      ${show(t.symbol?.value)}  ${t.symbol?.rule ?? ''}`);
+console.log(`symbol      ${show(t.symbol?.value)}  ${t.symbol?.rule ?? t.symbol?.reason ?? ''}`);
 console.log(`type        ${show(t.type?.value)}  ${t.type?.rule ?? ''}`);
 if (t.usage) console.log(`usage       ${t.usage.inputTokens} in / ${t.usage.outputTokens} out · $${t.usage.costUsd.toFixed(5)} billed this run`);

@@ -40,6 +40,23 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const isRealYmd = (s) => YMD.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 const normalizeWs = (s) => s.replace(/\s+/g, ' ').trim();
 
+const FIGURE_ENUMS = {
+  metric: ['eps', 'revenue'],
+  period: ['Q1', 'Q2', 'Q3', 'Q4', 'FY', null],
+  basis: ['GAAP', 'IFRS', 'adjusted', null],
+  kind: ['actual', 'estimate', 'previous'],
+  perShare: ['diluted', 'basic', null],
+};
+function checkFigure(f, where, fullText, fail) {
+  for (const [k, allowed] of Object.entries(FIGURE_ENUMS)) {
+    if (!allowed.includes(f?.[k])) fail('R-J4', `${where}.${k} ${JSON.stringify(f?.[k])} not in ${allowed.join('/')}`);
+  }
+  if (!(typeof f?.value === 'number' && Number.isFinite(f.value))) fail('R-E9', `${where}.value not a plain number: ${JSON.stringify(f?.value)}`);
+  if (typeof f?.evidence !== 'string' || typeof fullText !== 'string' || !normalizeWs(fullText).includes(normalizeWs(f.evidence))) {
+    fail('R-E1', `${where}: evidence not in fullText`);
+  }
+}
+
 const { values } = parseArgs({ options: { 'run-at': { type: 'string' } } });
 
 // The run time comes from stats.json, written by the same run (D26), so validating later doesn't shift the window.
@@ -187,6 +204,17 @@ for (const { line, record: r, error } of rows) {
         if (!hay.includes(normalizeWs(line))) fail('R-E1', `${where}: evidence not in fullText: "${line.slice(0, 80)}…"`);
       }
     }
+    // D48: timeExact is ISO 8601 UTC or null.
+    if (e.category === 'earnings' && e.timeExact != null && !(typeof e.timeExact === 'string' && ISO_UTC.test(e.timeExact))) {
+      fail('R-J3', `earnings.timeExact not ISO 8601 UTC: ${JSON.stringify(e.timeExact)}`);
+    }
+    // R-J4 / D12: every figure has a known shape, a plain number, and its own evidence in fullText.
+    if (e.category === 'earnings') {
+      if (!Array.isArray(e.figures)) fail('R-J4', 'earnings.figures must be an array');
+      else {
+        e.figures.forEach((f, i) => checkFigure(f, `earnings.figures[${i}]`, r.fullText, fail));
+      }
+    }
     for (const k of spec.dates) {
       if (!(k in e)) fail('R-E2', `${where}: missing "${k}"`);
       else if (e[k] !== null && !(typeof e[k] === 'string' && isRealYmd(e[k]))) fail('R-E8', `${where}.${k} not YYYY-MM-DD: ${JSON.stringify(e[k])}`);
@@ -205,9 +233,12 @@ for (const { line, record: r, error } of rows) {
     }
   }
 
-  // D38: an article labelled `others` because the LLM failed is reported, never silent.
+  // D38: an LLM failure is reported, never silent. Classify failed → others; extract failed → labels kept, fields null.
   const llmError = llmErrorByUrl.get(r.url);
-  if (llmError) add(warnings, 'LLM', line, r.url, `labelled others because the LLM failed (${llmError.kind} in ${llmError.stage}): ${llmError.message}`);
+  if (llmError) {
+    const effect = llmError.stage === 'extract' ? 'labels kept, every event field null' : 'labelled others';
+    add(warnings, 'LLM', line, r.url, `${effect} because the LLM failed (${llmError.kind} in ${llmError.stage}): ${llmError.message}`);
+  }
 }
 
 // --- Cross-checks against stats.json ---

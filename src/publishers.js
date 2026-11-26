@@ -11,7 +11,7 @@ const DEFAULTS = {
   extract: 'html', // registry.extractors name
   label: 'llm', // registry.labellers name: pre-filter → LLM → code checks (D34)
   delayMs: 1000, // polite pause before each request (D6)
-  defaultType: 'general', // placeholder until the Phase 3 type rule (D23)
+  defaultType: 'general', // the article type; a general-news article about one proven company becomes 'stock' (D47)
   selectors: {}, // overrides for DEFAULT_SELECTORS in src/blocks/extract-html.js
   paging: null, // { param, maxPages }: page back via ?<param>=2, 3… (src/lib/paging.js). null = one page.
 };
@@ -51,6 +51,7 @@ const ENTRIES = [
   {
     name: 'GlobeNewswire',
     site: 'globenewswire.com',
+    defaultType: 'pressReleases', // a wire: companies' own announcements (D47)
     startUrls: [
       'https://www.globenewswire.com/en/search/date/24HOURS?pageSize=10&page=1',
       'https://www.globenewswire.com/en/search/subject/prs',
@@ -102,6 +103,7 @@ const ENTRIES = [
   {
     name: 'Newsfile',
     site: 'newsfilecorp.com',
+    defaultType: 'pressReleases', // a wire: companies' own announcements (D47)
     startUrls: ['https://feeds.newsfilecorp.com/global/Last25Stories', 'https://www.newsfilecorp.com/'],
   },
   {
@@ -112,6 +114,7 @@ const ENTRIES = [
   {
     name: 'Business Wire',
     site: 'businesswire.com',
+    defaultType: 'pressReleases', // a wire: companies' own announcements (D47)
     startUrls: ['https://www.businesswire.com/newsroom'],
   },
   {

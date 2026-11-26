@@ -1,14 +1,23 @@
 {
   "_status": "DRAFT – to be verified by Marwan. Drafted by Claude Code by reading each article (not from LLM output), 2026-11-25.",
-  "_format": "Keyed by fixture file name. A field value { \"accept\": [a, b] } means either answer is right (ambiguous article). Fields marked in _m2 are scored from M2 on (symbol, relatedSymbols, type, time, timeExact).",
-  "_m2": ["symbol", "relatedSymbols", "type", "time", "timeExact"],
+  "_format": "Keyed by fixture file name. A field value { \"accept\": [a, b] } means either answer is right (ambiguous article). relatedSymbols is compared as a set. earnings.figures lists KEY figures only (not every one): each must be in the output with the same metric + value, and a period/basis/kind/perShare that matches (an array = any of these values; a key left out = not scored). Figures added in M2 (2026-11-25), DRAFT.",
   "articles": {
     "01-ies-q4-results": {
       "labels": ["earnings"],
       "symbol": "IESC", "relatedSymbols": ["IESC"], "type": "pressReleases",
       "events": [
         { "category": "earnings", "calendarYear": 2026, "period": "Q4", "fiscalDateEnding": "2026-09-30", "date": "2026-11-20",
-          "time": "bmo", "epsActual": 4.5, "epsEstimated": null, "revenueActual": 1390000000, "revenueEstimated": null }
+          "time": "bmo", "timeExact": null, "epsActual": 4.5, "epsEstimated": null, "revenueActual": 1390000000, "revenueEstimated": null,
+          "figures": [
+            {"metric": "eps", "period": "Q4", "value": 4.5, "basis": ["GAAP",null], "kind": "actual", "perShare": "diluted"},
+            {"metric": "eps", "period": ["Q4",null], "value": 2.49, "basis": ["GAAP",null], "kind": "previous"},
+            {"metric": "eps", "period": "Q4", "value": 4.07, "basis": "adjusted", "kind": "actual"},
+            {"metric": "revenue", "period": "Q4", "value": 1390000000, "basis": ["GAAP",null], "kind": "actual"},
+            {"metric": "revenue", "period": ["Q4",null], "value": 898000000, "basis": ["GAAP",null], "kind": "previous"},
+            {"metric": "eps", "period": "FY", "value": 13.24, "basis": ["GAAP",null], "kind": "actual"},
+            {"metric": "eps", "period": "FY", "value": 11.34, "basis": "adjusted", "kind": "actual"},
+            {"metric": "revenue", "period": "FY", "value": 4480000000, "basis": ["GAAP",null], "kind": "actual"}
+          ] }
       ],
       "notes": "Q4 + full-year release: Q4 figures come first. GAAP diluted $4.50 vs adjusted $4.07. FY EPS $13.24 must not be used. A 'two-for-one stock split ... August 2026' footnote is a passing mention, not splits. time: published 12:45 UTC = 7:45 ET, own press release → bmo (D11)."
     },
@@ -17,7 +26,13 @@
       "symbol": "DFNS", "relatedSymbols": ["DFNS"], "type": "pressReleases",
       "events": [
         { "category": "earnings", "calendarYear": 2026, "period": "Q3", "fiscalDateEnding": "2026-09-30", "date": "2026-11-24",
-          "time": "bmo", "epsActual": -30.8, "epsEstimated": null, "revenueActual": 4900000, "revenueEstimated": null }
+          "time": "bmo", "timeExact": null, "epsActual": -30.8, "epsEstimated": null, "revenueActual": 4900000, "revenueEstimated": null,
+          "figures": [
+            {"metric": "eps", "period": ["Q3",null], "value": -30.8, "basis": ["GAAP",null], "kind": "actual", "perShare": "diluted"},
+            {"metric": "eps", "period": ["Q3",null], "value": 5.05, "basis": ["GAAP",null], "kind": "actual", "perShare": "basic"},
+            {"metric": "revenue", "period": ["Q3",null], "value": 4900000, "basis": ["GAAP",null], "kind": "actual"},
+            {"metric": "revenue", "period": ["Q2",null], "value": 4000000, "basis": ["GAAP",null], "kind": "previous"}
+          ] }
       ],
       "notes": "Net income positive, basic EPS +$5.05, but 'a loss of $30.80 per diluted share': D12 diluted over basic → −30.80. Q2 2026 figures are 'previous'. time: 14:10 UTC = 9:10 ET → bmo."
     },
@@ -26,7 +41,7 @@
       "symbol": "JOUT", "relatedSymbols": ["JOUT"], "type": "pressReleases",
       "events": [
         { "category": "earnings", "calendarYear": 2026, "period": "Q4", "fiscalDateEnding": null, "date": "2026-12-11",
-          "time": "bmo", "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null }
+          "time": "bmo", "timeExact": null, "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null }
       ],
       "notes": "Date announcement: 'before market open'. The 11:00 a.m. ET is the conference call, not the release time."
     },
@@ -43,7 +58,15 @@
       "symbol": "HPQ", "relatedSymbols": ["HPQ"], "type": "pressReleases",
       "events": [
         { "category": "earnings", "calendarYear": 2026, "period": "Q4", "fiscalDateEnding": "2026-10-31", "date": "2026-11-24",
-          "time": "amc", "epsActual": 0.84, "epsEstimated": null, "revenueActual": 16000000000, "revenueEstimated": null },
+          "time": "amc", "timeExact": null, "epsActual": 0.84, "epsEstimated": null, "revenueActual": 16000000000, "revenueEstimated": null,
+          "figures": [
+            {"metric": "eps", "period": "FY", "value": 2.62, "basis": "GAAP", "kind": "actual"},
+            {"metric": "eps", "period": "FY", "value": 3.33, "basis": "adjusted", "kind": "actual"},
+            {"metric": "revenue", "period": "FY", "value": 60500000000, "basis": ["GAAP",null], "kind": "actual"},
+            {"metric": "eps", "period": "Q4", "value": 0.84, "basis": "GAAP", "kind": "actual"},
+            {"metric": "eps", "period": "Q4", "value": 0.83, "basis": "adjusted", "kind": "actual"},
+            {"metric": "revenue", "period": "Q4", "value": 16000000000, "basis": ["GAAP",null], "kind": "actual"}
+          ] },
         { "category": "dividends", "dividend": 0.31, "declarationDate": null, "date": null, "recordDate": "2026-12-09", "paymentDate": "2027-01-06" }
       ],
       "notes": "Full-year figures come FIRST ($2.62 GAAP EPS, $60.5B revenue); Q4 is $0.84 GAAP / $0.83 non-GAAP, $16.0B. The $0.30 dividend is last quarter's (previous). fiscalDateEnding only in a table header ('Three months ended | October 31, 2026'). time: 21:15 UTC = 16:15 ET → amc."
@@ -103,7 +126,11 @@
       "symbol": "CMBT", "relatedSymbols": ["CMBT", "CMBT.BR", "CMBTO.OL"], "type": "pressReleases",
       "events": [
         { "category": "earnings", "calendarYear": 2026, "period": "Q3", "fiscalDateEnding": "2026-09-30", "date": "2026-11-24",
-          "time": { "accept": ["bmo", null] }, "epsActual": 1.29, "epsEstimated": null, "revenueActual": 802932000, "revenueEstimated": null },
+          "time": { "accept": ["bmo", null] }, "timeExact": null, "epsActual": 1.29, "epsEstimated": null, "revenueActual": 802932000, "revenueEstimated": null,
+          "figures": [
+            {"metric": "eps", "period": "Q3", "value": 1.29, "basis": ["IFRS",null], "kind": "actual"},
+            {"metric": "eps", "period": "Q3", "value": 0.08, "basis": ["IFRS",null], "kind": "previous"}
+          ] },
         { "category": "dividends", "dividend": { "accept": [0.21, 0.65] }, "declarationDate": { "accept": [null, "2026-11-24"] },
           "date": { "accept": ["2026-12-09", "2026-12-08"] }, "recordDate": "2026-12-09", "paymentDate": "2026-12-17" }
       ],
@@ -122,7 +149,7 @@
       "symbol": null, "relatedSymbols": [], "type": "pressReleases",
       "events": [
         { "category": "earnings", "calendarYear": 2026, "period": { "accept": ["Q4", "FY"] }, "fiscalDateEnding": null, "date": "2026-12-09",
-          "time": "amc", "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null }
+          "time": "amc", "timeExact": null, "epsActual": null, "epsEstimated": null, "revenueActual": null, "revenueEstimated": null }
       ],
       "notes": "Canadian date announcement, no ticker written in the text (symbol must be null). The 2027 calendar and the Dec 10 call are distractors."
     },
@@ -152,7 +179,10 @@
       "symbol": null, "relatedSymbols": [], "type": "general",
       "events": [
         { "category": "earnings", "calendarYear": 2027, "period": "Q3", "fiscalDateEnding": null, "date": null,
-          "time": null, "epsActual": null, "epsEstimated": null, "revenueActual": 115800000000, "revenueEstimated": { "accept": [null, 108000000000] } }
+          "time": null, "timeExact": null, "epsActual": null, "epsEstimated": null, "revenueActual": 115800000000, "revenueEstimated": { "accept": [null, 108000000000] },
+          "figures": [
+            {"metric": "revenue", "period": "Q3", "value": 115800000000, "basis": null, "kind": "actual"}
+          ] }
       ],
       "notes": "News story of actual results. 'third quarter of fiscal 2027'. Date only as 'on Tuesday' (relative) → null. $108B was the company's own guidance, not an analyst estimate. No ticker written."
     },

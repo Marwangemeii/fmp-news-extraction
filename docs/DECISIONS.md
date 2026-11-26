@@ -238,10 +238,10 @@ Extract returns a **flat list** `values: [{ field: "dividends.recordDate", raw, 
 If a call still fails after the SDK's retries (API error, credits exhausted, timeout), is refused by the model, hits `max_tokens`, or is skipped by the budget cap, the article gets `labels: ['others']`, its trace has `llmError: { stage, kind: error|refusal|truncated|budget, message }`, `stats.json` counts `llmErrors` per publisher (+ `llmErrorUrls`), and the validator gives a **warning** per article. **No server-side fallback** to another model, so the trace always shows exactly which model produced each value.
 
 **Why:** Marwan, at plan review. In the first run this caught 25 schema rejections, which were visible immediately instead of looking like 25 normal `others`.
-**Note:** an extract failure also gives `others`, even though the classify labels were proven. That follows Marwan's rule, and it's listed as an open question in handoff 03.
+**Amended in M2 (Marwan, 2026-11-25):** an **extract** failure keeps the labels classify proved (K4/K11), with one all-null event per label (its `evidence` = the label's own sentence); `llmError: { stage: "extract" }` is traced and counted as before, and the validator warns "labels kept, every event field null". Only a **classify** failure gives `others`. Why: the labels were proven without the extractor, so dropping them lost correct information.
 
 ### D39. The code-side checks (K1–K10)
-- **K1** each evidence line is in `fullText` word for word (whitespace collapsed in both; nothing else normalized). **K2** each raw value is inside its evidence. **K3** the converter can read it. A failure makes that value null, and the reason is traced, e.g. `evidence not found in fullText (first 6 of 22 words match)`.
+- **K1** each evidence line is in `fullText` word for word (whitespace collapsed in both; nothing else normalized). **K2** each raw value is inside its evidence (case ignored since M2, D45). **K3** the converter can read it. A failure makes that value null, and the reason is traced, e.g. `evidence not found in fullText (first 6 of 22 words match)`.
 - **K4** a label stays only if its proving sentence passes K1. The drop rate is in `stats.json` (`labelsProposed`, `labelsDropped`, `labelDropRate`) and in the eval.
 - **K5** labels deduplicated and ordered; `others` is added by code, never by the LLM. **K6** exactly one event per label. **K8** the IPO action needs its wording in its sentence ("priced" ← "pric…"). **K9** a split ratio of 1:1 is refused. **K10** `stop_reason` must be `end_turn`.
 - The event's `evidence` (D10) is **built by code** from the sentences of the values that passed, in article order, plus the label's own sentence. So every line of it has passed K1.
@@ -267,9 +267,59 @@ There is nothing to check evidence against, so no value could be proven. Traced 
 ### D43. `relatedSymbols` is written in every record (after `symbol`)
 An array of strings (`[]` until M2). **Why:** R-J5 / D14. It's an added field; the required ones are unchanged.
 
+### D44. K11, the "subject" rule: on news, a label's sentence must be in the first 3 paragraphs
+For an article whose type is **not** `pressReleases`, a label survives only if its proving sentence is in the first 3 paragraphs of `fullText` (paragraphs = `\n\n`, D29). The check is K1 run on the opening text (`evidenceInOpening()` in `src/lib/checks.js`). A dropped label is traced (`labelChecks[].inOpening: false`, `reason: "not in opening (first 3 paragraphs)"`) and counted (`labelsNotInOpening` in stats and the eval). The classify message now starts with `<source>news</source>` or `<source>press release</source>`, and the prompt says: news → copy the sentence from the first three paragraphs, or give no label; press release → copy the sentence that announces the event, wherever it is.
+**Why:** R-L1. K4 proves a sentence *exists*, not that it's the subject. In the M1 run, CryptoPotato recaps got `ipos` from sentences in paragraphs 2–10.
+**Why news only (Marwan, plan review):** in a company's own release, everything it announces is its subject, and releases put highlights as one-line bullets, each its own paragraph. HP's dividend increase is in paragraph 11, and CMB.TECH's distribution in paragraph 6. Applied to every article, the rule would have dropped both gold `dividends` labels (recall 100% → 50%).
+**Considered:** 3 paragraphs everywhere (the regression above); "the first ~1,500 characters" (keeps HP and CMB, but lets in more deep mentions on news).
+**Measured (eval, 19 fixtures):** K11 dropped 0/21 labels, and the labels are unchanged (17/19). The opinion piece (fixture 19) still gets `ipos`, because its IPO sentence *is* in its opening, so this fixture is a judgment call for the prompt, not for K11. The effect on the real news run is in handoff 03 (M2).
+
+### D45. Evidence comes from the body only; K2 ignores case
+- The extract prompt says: copy evidence from the article body, never the title. K1 already rejects a title sentence, because the title isn't in `fullText`; the prompt now says so, so the value isn't lost (T3's period/year were lost this way in M1).
+- **K2** (raw value inside its evidence) compares lowercased text. The model writes "fourth quarter" for "Fourth quarter" (HP in M1). **K1 stays exact** (whitespace only), so the sentence is still verbatim. The case-insensitive match only decides whether a value is *in* a sentence that is already proven.
+**Why:** both were measured misses in M1 with no risk of a wrong value. Marwan's decision.
+
+### D46. Symbols: K7, a ticker regex, the FMP suffix table
+`src/lib/symbols.js`:
+- **K7:** a ticker the classifier proposes is kept only if its sentence passes K1, the ticker is in that sentence as a whole word (case-sensitive), and the exchange, if given, is in it too. So "NVDA" for an article that never writes NVDA (fixture 18) → null.
+- **Regex `findTickers()`:** `(Exchange: TICKER)` pairs inside brackets, including several listings in one bracket (`(NYSE: CMBT, Euronext Brussels: CMBT and Euronext Oslo Børs: CMBTO)`) and a bare ticker that keeps the previous exchange (`(Nasdaq: SENEA, SENEB)`). A pair counts only if the exchange is in the table.
+- **symbol:** the classifier's K7-proven main ticker. With **no classifier answer** (pre-filter skip, no fullText, or a classify failure), the first regex ticker in the first 3 paragraphs (answers the open question on articles that skip the LLM). If the classifier says null ("not about one company") or its ticker fails K7 → null: the code doesn't override the subject judgment with a guess.
+- **relatedSymbols:** the K7-proven classifier tickers + every regex ticker, main first, deduplicated.
+- **FMP format:** exchange → code → suffix. US (NASDAQ, NYSE, NYSE American/Arca, Cboe, OTC): none. TSX `.TO`, TSXV `.V`, CSE `.CN`, Cboe Canada `.NE`, LSE `.L`, XETRA `.DE`, Frankfurt `.F`, Paris `.PA`, Amsterdam `.AS`, Brussels `.BR`, Milan `.MI`, SIX `.SW`, ASX `.AX`, HKEX `.HK`, Tokyo `.T`, NSE `.NS`, Oslo `.OL`, Stockholm `.ST`. A dot inside a ticker becomes `-` (`BRK.B` → `BRK-B`, `REI.UN` on TSX → `REI-UN.TO`). If the classifier gives no exchange, the exchange the regex found for the same ticker is used. No exchange written anywhere → the ticker as written. An unknown exchange → null (a ticker without its suffix would be a wrong symbol).
+- **Verification status:** `.L`, `.DE`, `.MI` were checked in M1. **FMP's docs site returned 403 to our fetcher (2026-11-25), so the rest, and the `-` for share classes, are unverified**: they follow the Yahoo-style convention FMP uses. To verify: one FMP `search-symbol` call per suffix with an API key (Marwan / FMP).
+**Why:** R-A10, R-J5, D14. **Considered:** trusting the LLM's symbol (it can name a ticker the article never writes); regex only (misses "under the ticker symbol "ANT"" in news).
+
+### D47. The `type` rule
+`src/lib/type.js`, `typeOf(entry, symbol)`: the publisher's `defaultType` decides (`pressReleases` for the wires GlobeNewswire, Business Wire and Newsfile, `crypto` for CryptoPotato), except that on a `general` publisher an article with a **proven main symbol** is `stock`.
+**Why:** R-A11; the gold set (a TechCrunch IPO story with ticker ANT is `stock`, a CEO story with no ticker is `general`). The rule is deterministic and traced (`trace.type.rule`).
+**Not yet:** forex. Investing.com's forex stories will need a URL-based override in its schema entry (Phase 4), added only when that entry is built.
+
+### D48. Earnings `time` / `timeExact` in practice (D11)
+`src/lib/time.js` + `earningsTime()` in the labeller, in this order:
+1. **Stated in the article** (the extractor's `earnings.time`, proven by K1/K2): wording ("before the market opens", "pre-market", "after the close", …) → `bmo`/`amc`. A clock time with a timezone ("4:05 p.m. ET", EST/EDT/CT/PT/GMT/UTC/CET…) on the **proven** results date → `timeExact` in UTC (New York daylight saving time via `Intl`, no dependency). With no wording, a clock time gives `bmo`/`amc` only for a US listing (before 9:30 / from 16:00 ET). No proven date → `timeExact` null, traced.
+2. **Press-release rule:** if nothing is stated, and the article is `pressReleases`, the main symbol is on a US exchange, at least one **actual** figure is proven (it reports results; it isn't a date announcement), and the results date is unstated or equals the publish day in ET → the publish time in ET gives `bmo`/`amc`, or null during market hours. `timeExact` stays null (D11: only stated times).
+3. Otherwise null. A news article's publish time is never used.
+**Why:** R-J3. Checked against the gold: IES 7:45 ET → bmo, T3 9:10 → bmo, HP 16:15 → amc, Johnson Outdoors "before market open" (its 12:48 ET publish time is a date announcement, so the rule doesn't apply). The eval scores `time` and `timeExact` 7/7.
+**Considered:** applying the market-hours rule to Canadian listings too (same hours; not in D11, so left out).
+
+### D49. `figures[]` in the earnings event, and how the eval scores it
+Every **proven** figure (passed K1–K3) is written as `{ metric, value, period, basis, kind, perShare, evidence }`. `period` is converted (`Q1`–`Q4`/`FY`/null), and `basis`/`perShare` are null when not stated. The validator checks each figure's enums, its number and its evidence (R-E1). `parsePeriod` now reads a bare "fiscal 2026" as `FY` (like "FY2026"); "same quarter of fiscal 2025" stays null.
+**Eval:** the gold lists **key** figures per earnings fixture (21 across 5 fixtures, DRAFT): each must be in the output with the same metric + value (found), else the value is there with a wrong period/basis/kind (mislabelled), else missed. A gold attribute can list several accepted values.
+**Why:** R-J4 / D12. Listing every figure of a 400-paragraph release by hand would be slow and error-prone; the key figures are the ones a wrong label would hurt.
+
+### D50. Haiku vs Sonnet for extract: Haiku stays
+Same fixtures, same classify (Haiku), prompt v2:
+
+| extract model | fields correct / wrong / missed | key figures found | extract cost (17 calls) |
+|---|---|---|---|
+| claude-haiku-5-5 | 126 / 0 / 4 | 20 / 21 | ~$0.03 |
+| claude-sonnet-5-5 | 126 / 0 / 4 | 21 / 21 | $0.39 |
+
+Sonnet gets Nvidia's `period`, `calendarYear` and figure period (Haiku misses them), but misses `calendarYear` on T3 and CMB.TECH (Haiku gets them). One run each; the models aren't fully deterministic. **Decision: Haiku for both stages (D34 stands).** About 13× the cost for one more key figure, with the same field accuracy, doesn't pay on a $10 budget.
+
 ---
 
 ## Open questions (decide in the phase noted)
 - ~~**Phase 3:** which Claude model(s); prompt structure.~~ Decided: D34, D35.
-- **Phase 3:** `symbol` and `type` for articles that skip the LLM: from site metadata and ticker patterns like `(NASDAQ: ABC)`, or `null`.
-- **Phase 3:** the `type` rule: a default per publisher in the schema, overridden by content (e.g. a forex story on Investing.com).
+- ~~**Phase 3:** `symbol` and `type` for articles that skip the LLM.~~ Decided: D46 (regex in the opening), D47.
+- ~~**Phase 3:** the `type` rule.~~ Decided: D47. Forex override: Phase 4, with the Investing.com entry.

@@ -4,7 +4,7 @@
  */
 
 /** Bump when a prompt or a schema changes in a way that should invalidate cached answers. */
-export const PROMPT_VERSION = 'v1';
+export const PROMPT_VERSION = 'v2'; // v2: K11 opening rule, body-only evidence, source kind in the classify message
 
 /**
  * Both stages on Haiku 5.5: Marwan's API credit is $10 and a full run on Sonnet would cost ~$80.
