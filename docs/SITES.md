@@ -118,6 +118,8 @@ Template for each site:
 | 2026-11-23 | `/sitemap_index.xml`, `/page/2/` | 200 (Yoast sitemap index; HTML archive page) | not used: only `lastmod` / no machine-readable dates |
 | 2026-11-25 | `CACHE=1` run on a mobile hotspot: 19 article pages not in the cache yet | **403** on all 19 (the 235 cached pages weren't fetched); feed and REST API still 200 | written with `fullText: null`, reason `blocked` (D31). Likely the hotspot IP; retry from the usual network before Phase 5 (D13 step 4) |
 | 2026-11-27 | `--sample 5` run (Phase 4 step 0 check), 1 new article page | **403** again (`/monero-xmr-drops-15-daily-heres-the-reason/`) | not only the hotspot: try the browser fetcher for CryptoPotato articles in Phase 5 |
+| 2026-11-27 (session B) | 3 recent feed articles not in `.cache/`, http fetcher (Chrome UA), usual network | **403 on all 3**: Cloudflare managed challenge, `cf-mitigated: challenge`, `<title>Just a moment...` (5,974 bytes); feed still 200 | articles now challenged for plain HTTP from this network, not only the hotspot |
+| 2026-11-27 (session B) | 2 of them in the browser fetcher; then with a test change that waits on a 403 challenge (3 × 20 s) | 403 in 2.5 s; with waiting: still the challenge after 75 s | headless Chromium doesn't pass this challenge (as on Benzinga, D62); change reverted (D63). Phase 5: ~235 pages are in `.cache/`; uncached ones will be `blocked`. Production: FMP's proxy (`PROXY_URL`, D63) |
 
 ## 7. Newsfile
 - **Start URLs:** `https://feeds.newsfilecorp.com/global/Last25Stories` (given), `https://www.newsfilecorp.com/` (given), plus the added `https://www.newsfilecorp.com/search?k=` (D56).

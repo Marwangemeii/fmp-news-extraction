@@ -10,6 +10,7 @@ import { runAll, newLlmStats } from './controller.js';
 import { assertApiKey } from './llm/client.js';
 import { getWindow } from './lib/window.js';
 import { writeJsonl } from './lib/jsonl.js';
+import { applyHttpProxy } from './lib/proxy.js';
 
 const OUTPUT = 'output/articles.jsonl';
 const TRACES = 'output/traces.jsonl';
@@ -68,11 +69,17 @@ if (selected.some((p) => p.enabled && p.label === 'llm')) {
 }
 
 const cache = process.env.CACHE === '1'; // D15: dev cache for article pages
+// D63: PROXY_URL routes both fetchers through a proxy (FMP's proxy network). Unset = direct.
+const proxy = applyHttpProxy();
+if (proxy === 'unsupported') {
+  console.warn('PROXY_URL: this Node has no http.setGlobalProxyFromEnv (Node 24+), so only the browser fetcher uses it.' +
+    ' For HTTP on older Node, start with NODE_USE_ENV_PROXY=1 and HTTPS_PROXY set in the shell.');
+}
 const runAt = new Date();
 const window = getWindow(runAt);
 console.log(
   `Window: ${window.start.toISOString()} → ${window.end.toISOString()}${cache ? ' · CACHE=1' : ''}` +
-    `${labelOverride ? ` · LABEL=${labelOverride}` : ''}${sample ? ` · --sample ${sample}` : ''}${limit ? ` · --limit ${limit}` : ''}`,
+    `${labelOverride ? ` · LABEL=${labelOverride}` : ''}${proxy !== 'off' ? ` · PROXY ${proxy}` : ''}${sample ? ` · --sample ${sample}` : ''}${limit ? ` · --limit ${limit}` : ''}`,
 );
 
 let result;
@@ -110,6 +117,7 @@ const runStats = {
   limit: limit ?? null,
   sample: sample ?? null,
   label: labelOverride, // null = each entry's own labeller
+  proxy, // 'off' | 'on' | 'unsupported' (browser only), D63
   durationMs: Date.now() - runAt.getTime(),
   llm,
   publishers: stats,

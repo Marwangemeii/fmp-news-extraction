@@ -395,6 +395,14 @@ Ladder (all logged in SITES.md): plain HTTP → 403 (Cloudflare "Sorry, you have
 - **The production approach** is FMP's proxy network (D13 mentions a proxy setting) or Benzinga's licensed news API. The schema keeps the article selectors (`h1.article-title`, `.article-content-body-only`, remove list), verified on pages loaded before the block, so switching the article fetcher is a one-line change.
 **Why:** R-J2 asks for real effort, and this is it, documented; CLAUDE.md rule 7 and Marwan's call set the limit.
 
+### D63. A proxy hook: `PROXY_URL`, for both fetchers, no dependency
+`PROXY_URL=http://user:pass@host:port` (env, unset = direct; `src/lib/proxy.js`):
+- **Browser:** passed to `chromium.launch({ proxy })` (server + username/password split out, as Playwright wants them).
+- **HTTP:** `run.js` calls Node's own `http.setGlobalProxyFromEnv({ HTTP_PROXY, HTTPS_PROXY })` at startup, which makes the built-in `fetch` use it. Tested with a throwaway local CONNECT proxy: with `PROXY_URL` set, both fetchers' connections went through it; unset, none did. `stats.json` gets `proxy: 'off' | 'on' | 'unsupported'`, and the "Window:" line shows it.
+- **Node 22 gap:** `setGlobalProxyFromEnv` exists on Node 24 (this machine: 24.21), not on 22. There the run warns and only the browser is proxied; HTTP works if Node is *started* with `NODE_USE_ENV_PROXY=1` and `HTTPS_PROXY` in the shell environment.
+**Why:** D13 promised the hook so FMP's proxy network can be plugged in; it's the production answer for blocked sites (Benzinga D62, and session B's). **Considered:** `undici`'s `ProxyAgent` (a new dependency); setting `HTTPS_PROXY` in `process.env` or `.env` (tested: Node reads them only before startup, so neither works); `NODE_USE_ENV_PROXY` in `.env` (same: `--env-file` loads too late for it).
+**Also tried, not kept:** waiting in the browser on Cloudflare's 403 "Just a moment..." challenge (it is served with 403 + `cf-mitigated: challenge`, and the fetcher gives up on a 403 at once). On CryptoPotato it didn't clear in 3 × 20 s in headless Chromium (as on Benzinga), so it only added 75 s per article; reverted.
+
 ---
 
 ## Open questions (decide in the phase noted)

@@ -11,6 +11,7 @@
  */
 import { chromium } from 'playwright';
 import { blockReason } from '../lib/blocked.js';
+import { browserProxy } from '../lib/proxy.js';
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -28,7 +29,7 @@ const tabs = new WeakMap();
 async function tabFor(entry) {
   if (!tabs.has(entry)) {
     tabs.set(entry, (async () => {
-      browserPromise ??= chromium.launch({ headless: process.env.BROWSER_HEADED !== '1' });
+      browserPromise ??= chromium.launch({ headless: process.env.BROWSER_HEADED !== '1', proxy: browserProxy() }); // proxy: D63
       const context = await (await browserPromise).newContext({ userAgent: USER_AGENT, locale: 'en-US' });
       const page = await context.newPage();
       // The latest main-document response: after a challenge reloads the page, this is the real page's.

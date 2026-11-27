@@ -45,4 +45,5 @@ Take-home task for FMP (Financial Modeling Prep): collect every article that 10 
 - `npm run explain -- <url or part of it> [--json]`: prints the trace for one article from `output/traces.jsonl`
 - `npm run eval [-- --verbose] [-- --only <prefix>]`: runs the real labeller on `test/fixtures/articles` against `test/fixtures/gold.json` (LLM cache always on); `LLM_EXTRACT_MODEL=claude-sonnet-5-5 npm run eval` compares models
 - `node scripts/make-fixture.js <url> --publisher <name> --out <file> [--body <css>] [--date <css>] [--cached]`: saves one article as an eval fixture
+- `PROXY_URL=http://user:pass@host:port npm start`: both fetchers through a proxy (D63; HTTP needs Node 24+)
 - `LLM_BUDGET_USD=1 npm start`: caps the run's estimated LLM spend (D34). `npm start` and `npm run eval` load `.env` (Node's `--env-file-if-exists`)
