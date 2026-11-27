@@ -5,7 +5,7 @@
 import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { publishers } from './publishers.js';
-import { registry } from './blocks/index.js';
+import { registry, closeBlocks } from './blocks/index.js';
 import { runAll, newLlmStats } from './controller.js';
 import { assertApiKey } from './llm/client.js';
 import { getWindow } from './lib/window.js';
@@ -75,7 +75,13 @@ console.log(
     `${labelOverride ? ` · LABEL=${labelOverride}` : ''}${sample ? ` · --sample ${sample}` : ''}${limit ? ` · --limit ${limit}` : ''}`,
 );
 
-const { records, traces, stats } = await runAll(selected, { registry, window, limit, sample, cache });
+let result;
+try {
+  result = await runAll(selected, { registry, window, limit, sample, cache });
+} finally {
+  await closeBlocks(); // the browser would otherwise keep the process alive
+}
+const { records, traces, stats } = result;
 await writeJsonl(OUTPUT, records);
 await writeJsonl(TRACES, traces);
 console.log(`Wrote ${records.length} articles to ${OUTPUT} and ${traces.length} traces to ${TRACES}`);

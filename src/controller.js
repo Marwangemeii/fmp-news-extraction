@@ -7,7 +7,7 @@
  */
 import { canonicalizeUrl } from './lib/url.js';
 import { isInWindow } from './lib/window.js';
-import { toSources, discoverPages } from './lib/paging.js';
+import { toSources, discoverPages, listDateOf } from './lib/paging.js';
 import { cached } from './lib/cache.js';
 import { createLimiter } from './lib/pool.js';
 import { BLOCKED_STATUSES } from './lib/blocked.js';
@@ -104,6 +104,10 @@ function newStats() {
     // Every written article with fullText null, by reason (D31). The validator shows the reason per URL.
     fullTextNull: { noBody: 0, blocked: 0, error: 0 },
     fullTextNullUrls: [],
+    // Fetched, but not written: the page's date is outside the window, or no publish date at all (D58).
+    droppedOutsideWindow: 0,
+    droppedNoDate: 0,
+    droppedNoDateUrls: [],
     oldestDate: null,
     windowStartReached: false,
     labels: Object.fromEntries(LABELS.map((l) => [l, 0])), // articles per label
@@ -166,7 +170,6 @@ function countTrace(llm, trace) {
  *   `s` is this publisher's stats object, updated in place; `llmLimit` is the run-wide LLM limiter
  */
 async function runPublisher(entry, { registry, window, limit, sample, cache, seen, s, spend, llmLimit }) {
-  const fetchList = pick(registry, 'fetchers', entry.fetcher.list);
   const extract = pick(registry, 'extractors', entry.extract);
   const label = pick(registry, 'labellers', entry.label);
   // D15: only article pages are cached; list pages always come fresh.
@@ -178,6 +181,7 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
   const found = new Map();
   for (const source of toSources(entry)) {
     const discover = pick(registry, 'discoverers', source.discover);
+    const fetchList = pick(registry, 'fetchers', source.fetcher); // a source may use its own fetcher (D55)
     let result;
     try {
       result = await discoverPages(source, entry, { fetchList, discover, window });
@@ -211,10 +215,11 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
   s.windowStartReached = s.sources.some((x) => x.reachedStart);
   s.discovered = found.size;
 
-  // 2. Window + limit. Items without a list date are kept and re-checked after extraction.
+  // 2. Window + limit. The list date may be a sitemap lastmod (D58), so the article page's own date
+  // decides after extraction. Items without any list date are kept and checked then too.
   let todo = [...found.values()]
-    .filter((item) => !item.publishedDate || isInWindow(item.publishedDate, window))
-    .sort((a, b) => (b.publishedDate ?? '').localeCompare(a.publishedDate ?? ''));
+    .filter((item) => !listDateOf(item) || isInWindow(listDateOf(item), window))
+    .sort((a, b) => (listDateOf(b) ?? '').localeCompare(listDateOf(a) ?? ''));
   s.inWindow = todo.length;
   if (sample) todo = spreadSample(todo, sample);
   else if (limit) todo = todo.slice(0, limit);
@@ -239,7 +244,17 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
       article = extract('', item, entry, item.url);
     }
 
-    if (!isInWindow(article.publishedDate, window)) continue;
+    if (!article.publishedDate) {
+      // Neither the page nor the list gives a publish date (e.g. a blocked page listed only with a
+      // lastmod). Never written with a guessed date, but counted and listed (D58).
+      s.droppedNoDate++;
+      s.droppedNoDateUrls.push({ url: article.url, reason: nullReason ?? 'no publish date on the page' });
+      continue;
+    }
+    if (!isInWindow(article.publishedDate, window)) {
+      s.droppedOutsideWindow++; // the list date said maybe; the page's own date says no
+      continue;
+    }
     if (seen.has(article.url)) continue;
     seen.add(article.url);
 
@@ -285,7 +300,9 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
     `[${entry.name}] ${paging} · oldest ${s.oldestDate} · discovered ${s.discovered} · in window ${s.inWindow}` +
       ` · processed ${todo.length}${sample ? ' (--sample)' : limit ? ' (--limit)' : ''} · written ${s.written} · errors ${s.errors}` +
       `${cache ? ` · from cache ${s.fromCache}` : ''}` +
-      `${s.fullTextNullUrls.length ? ` · fullText null ${JSON.stringify(s.fullTextNull)}` : ''}`,
+      `${s.fullTextNullUrls.length ? ` · fullText null ${JSON.stringify(s.fullTextNull)}` : ''}` +
+      `${s.droppedOutsideWindow ? ` · page date outside window ${s.droppedOutsideWindow}` : ''}` +
+      `${s.droppedNoDate ? ` · no publish date ${s.droppedNoDate}` : ''}`,
   );
   const l = s.llm;
   console.log(

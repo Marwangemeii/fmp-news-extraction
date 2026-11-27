@@ -254,7 +254,9 @@ if (stats.limit) add(warnings, 'R-D3', 0, '', `dev run with --limit ${stats.limi
 if (stats.sample) add(warnings, 'R-D3', 0, '', `dev run with --sample ${stats.sample}: not a full collection`);
 if (stats.label) add(warnings, 'LLM', 0, '', `dev run with LABEL=${stats.label}: labels are not real`);
 // A source whose page 1 failed (e.g. blocked) is isolated by the controller; show it here so it isn't missed.
+// Same for articles left out because no publish date could be proven (D58).
 for (const [name, s] of Object.entries(stats.publishers ?? {})) {
+  for (const x of s.droppedNoDateUrls ?? []) add(warnings, 'R-D1', 0, x.url, `${name}: not written, no provable publish date (${x.reason})`);
   for (const src of s.sources ?? []) {
     if (src.error) add(warnings, 'R-D2', 0, '', `${name}: source ${src.url} → ${src.pagingStop}: ${src.error}`);
   }

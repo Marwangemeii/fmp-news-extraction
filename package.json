@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",
     "cheerio": "^1.2.0",
-    "fast-xml-parser": "^5.12.1"
+    "fast-xml-parser": "^5.12.1",
+    "playwright": "^1.65.1"
   }
 }

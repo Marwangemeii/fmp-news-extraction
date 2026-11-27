@@ -84,15 +84,79 @@ test('toSources: strings use the entry defaults; objects override them, includin
   const entry = {
     discover: 'rss',
     paging: { param: 'paged', maxPages: 5 },
+    fetcher: { list: 'http', article: 'browser' },
     startUrls: [
       'https://a.test/feed',
       { url: 'https://a.test/api', discover: 'wp-json', paging: { param: 'page', maxPages: 2 } },
       { url: 'https://a.test/other-feed', paging: null },
+      // D54/D55: a source can pick its own list fetcher and carry an html-list config.
+      { url: 'https://a.test/search', discover: 'html-list', fetcher: 'browser', list: { item: 'li', link: 'a' } },
     ],
   };
+  const base = { fetcher: 'http', list: null };
   assert.deepEqual(toSources(entry), [
-    { url: 'https://a.test/feed', discover: 'rss', paging: { param: 'paged', maxPages: 5 } },
-    { url: 'https://a.test/api', discover: 'wp-json', paging: { param: 'page', maxPages: 2 } },
-    { url: 'https://a.test/other-feed', discover: 'rss', paging: null },
+    { url: 'https://a.test/feed', discover: 'rss', paging: { param: 'paged', maxPages: 5 }, ...base },
+    { url: 'https://a.test/api', discover: 'wp-json', paging: { param: 'page', maxPages: 2 }, ...base },
+    { url: 'https://a.test/other-feed', discover: 'rss', paging: null, ...base },
+    {
+      url: 'https://a.test/search', discover: 'html-list', paging: { param: 'paged', maxPages: 5 },
+      fetcher: 'browser', list: { item: 'li', link: 'a' },
+    },
   ]);
 });
+
+test('discoverPages passes the source to the discoverer (it holds the html-list config)', async () => {
+  let got;
+  const source = { url: 'https://news.test/list', discover: 'fake', paging: null, list: { item: 'li', link: 'a' } };
+  await discoverPages(source, {}, {
+    fetchList: async (url) => ({ url, body: '' }),
+    discover: (_body, _url, src) => { got = src; return []; },
+    window,
+  });
+  assert.equal(got, source);
+});
+
+test('a rate-limited list page is retried after a pause, then paging continues (D59)', async () => {
+  let calls = 0;
+  const fetchList = async (url, _entry, opts) => {
+    calls++;
+    assert.equal(opts.delayMs, 4000); // the source's own pacing reaches the fetcher
+    return { url, body: url };
+  };
+  // Page 2 says "rate limited" twice, then works.
+  let page2 = 0;
+  const discover = (body) => {
+    const n = Number(new URL(body).searchParams.get('page') ?? 1);
+    if (n === 2 && page2++ < 2) throw Object.assign(new Error('rate-limit page'), { blocked: true, rateLimited: true });
+    return n <= 3 ? [item(n, [null, "2026-11-15", "2026-11-10", "2026-11-05"][n] + "T00:00:00.000Z")] : [];
+  };
+  const source = { url: 'https://news.test/list', discover: 'x', paging: { param: 'page', maxPages: 10 }, delayMs: 4000 };
+  const r = await quietErrors(() => discoverPages(source, {}, { fetchList, discover, window, pauseMs: 0 }));
+  assert.equal(r.blockedRetries, 2);
+  assert.equal(r.items.length, 3);
+  assert.equal(r.stop, 'window start reached');
+  assert.equal(calls, 5); // page 1, page 2 three times, page 3
+});
+
+test('a list page that stays rate-limited stops paging with an error, never as an "empty page"', async () => {
+  const fetchList = async (url) => ({ url, body: url });
+  const discover = (body) => {
+    if (body.includes('page=2')) throw Object.assign(new Error('rate-limit page'), { blocked: true, rateLimited: true });
+    return [item(1, '2026-11-20T00:00:00.000Z')];
+  };
+  const source = { url: 'https://news.test/list', discover: 'x', paging: { param: 'page', maxPages: 10 } };
+  const r = await quietErrors(() => discoverPages(source, {}, { fetchList, discover, window, pauseMs: 0 }));
+  assert.equal(r.stop, 'page error');
+  assert.match(r.error, /rate-limit/);
+  assert.equal(r.blockedRetries, 3);
+});
+
+async function quietErrors(fn) {
+  const e = console.error;
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = e;
+  }
+}

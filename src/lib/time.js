@@ -71,6 +71,49 @@ function toUtc(date, minutes, zoneRaw) {
   return new Date(utc).toISOString();
 }
 
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const ZONE_WORDS = 'et|ct|mt|pt|est|edt|cst|cdt|mst|mdt|pst|pdt|gmt|utc|bst|cet|cest';
+/** "2026-11-27 10:56 AM EST" (date first) */
+const LIST_ISO_LOCAL = new RegExp(`(\\d{4})-(\\d{2})-(\\d{2})[ T](\\d{1,2}):(\\d{2})(?::\\d{2})?\\s*([ap]\\.?m\\.?)?\\s*(${ZONE_WORDS})\\b`, 'i');
+/** "November 27, 2026 10:30 ET", "Nov. 27, 2026 4:05 p.m. EST" (month name first) */
+const LIST_MONTH_FIRST = new RegExp(`\\b([a-z]{3})[a-z]*\\.? (\\d{1,2}),? (\\d{4}),? (\\d{1,2}):(\\d{2})\\s*([ap]\\.?m\\.?)?\\s*(${ZONE_WORDS})\\b`, 'i');
+
+/**
+ * A date as a site writes it in an article list → ISO UTC, or null (D54). Used by list discoverers,
+ * so it searches inside a longer text ("2026-11-27 10:56 AM EST | Company name").
+ * - a wall time with a written timezone: converted with the zone tables above (DST from the date);
+ * - an ISO / RFC date with an offset or Z ("2026-11-27T15:30:16+00:00", "Fri, 27 Nov 2026 10:25:00 -0500").
+ * A date with no timezone at all → null: the zone would be a guess.
+ * @param {string | null | undefined} text
+ * @returns {string | null}
+ */
+export function parseListDate(text) {
+  if (!text) return null;
+  const t = text.replace(/\s+/g, ' ').trim();
+  const iso = t.match(LIST_ISO_LOCAL);
+  const named = iso ? null : t.match(LIST_MONTH_FIRST);
+  if (iso || named) {
+    const [y, mo, d, h, mi, ampm, zone] = iso
+      ? [iso[1], iso[2], iso[3], iso[4], iso[5], iso[6], iso[7]]
+      : [named[3], MONTHS[named[1].toLowerCase()], named[2], named[4], named[5], named[6], named[7]];
+    if (!mo) return null;
+    let hour = Number(h);
+    if (ampm) {
+      if (hour < 1 || hour > 12) return null;
+      hour = (hour % 12) + (/^p/i.test(ampm) ? 12 : 0);
+    }
+    if (hour > 23 || Number(mi) > 59) return null;
+    const date = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return toUtc(date, hour * 60 + Number(mi), zone);
+  }
+  // Machine-readable dates must carry their own offset.
+  if (/(Z|[+-]\d{2}:?\d{2}|GMT|UTC)$/i.test(t)) {
+    const ms = Date.parse(t);
+    return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+  }
+  return null;
+}
+
 /**
  * The release time as written → { time, timeExact }.
  * - wording ("before the market opens") → bmo/amc;

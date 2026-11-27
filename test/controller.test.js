@@ -112,6 +112,31 @@ test('publishers run in parallel, output and stats stay in schema order', async 
   assert.ok(records.slice(0, -1).every((r) => r.publisher === 'A'));
 });
 
+test('a lastmod-only item (D58): in window by listDate; page date decides; no date at all → counted, not written', async () => {
+  const reg = {
+    ...registry,
+    fetchers: {
+      fake: async (url) => {
+        if (url === 'https://news.test/sm') return { url, body: '' };
+        if (url === 'https://news.test/dated') return { url, body: '<meta property="article:published_time" content="2026-11-20T09:00:00Z"><article><p>Dated.</p></article>' };
+        if (url === 'https://news.test/old') return { url, body: '<meta property="article:published_time" content="2026-11-01T09:00:00Z"><article><p>Old.</p></article>' };
+        throw Object.assign(new Error('HTTP 403'), { status: 403, blocked: true }); // /blocked
+      },
+    },
+    discoverers: {
+      sm: () => ['dated', 'old', 'blocked'].map((id) => ({ url: `https://news.test/${id}`, title: id, publishedDate: null, listDate: '2026-11-21T00:00:00.000Z' })),
+    },
+  };
+  const e = { ...entry, startUrls: ['https://news.test/sm'], discover: 'sm' };
+  const { records, stats } = await quiet(() => runAll([e], { registry: reg, window }));
+  const s = stats.Fake;
+  assert.equal(s.inWindow, 3); // by lastmod
+  assert.deepEqual(records.map((r) => [r.url, r.publishedDate]), [['https://news.test/dated', '2026-11-20T09:00:00.000Z']]);
+  assert.equal(s.droppedOutsideWindow, 1); // "old": modified recently, published before the window
+  assert.equal(s.droppedNoDate, 1);
+  assert.deepEqual(s.droppedNoDateUrls, [{ url: 'https://news.test/blocked', reason: 'blocked' }]);
+});
+
 test('--sample spreads over the list: first, last and evenly in between', () => {
   const items = Array.from({ length: 11 }, (_, i) => i);
   assert.deepEqual(spreadSample(items, 3), [0, 5, 10]);

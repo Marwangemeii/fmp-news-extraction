@@ -79,10 +79,34 @@ Template for each site:
 | 2026-11-23 | `/wp-json/wp/v2/posts?per_page=100&page=2` | 200 JSON, 100 posts, `cf-cache-status: MISS` | used for paging back (D27) |
 | 2026-11-23 | `/sitemap_index.xml`, `/page/2/` | 200 (Yoast sitemap index; HTML archive page) | not used: only `lastmod` / no machine-readable dates |
 | 2026-11-25 | `CACHE=1` run on a mobile hotspot: 19 article pages not in the cache yet | **403** on all 19 (the 235 cached pages weren't fetched); feed and REST API still 200 | written with `fullText: null`, reason `blocked` (D31). Likely the hotspot IP; retry from the usual network before Phase 5 (D13 step 4) |
+| 2026-11-27 | `--sample 5` run (Phase 4 step 0 check), 1 new article page | **403** again (`/monero-xmr-drops-15-daily-heres-the-reason/`) | not only the hotspot: try the browser fetcher for CryptoPotato articles in Phase 5 |
 
 ## 7. Newsfile
-- **Start URLs:** Last25Stories feed, the homepage
-- **Notes:** the feed has only 25 items, so another route is needed. Many Canadian issuers: watch for TSXV/CSE ticker suffixes. **(hypothesis)**
+- **Start URLs:** `https://feeds.newsfilecorp.com/global/Last25Stories` (given), `https://www.newsfilecorp.com/` (given), plus the added `https://www.newsfilecorp.com/search?k=` (D56).
+- **Discovery route:**
+  - Feed (HTTP, `rss`, `paging: null`): 25 newest releases (~2 hours on a weekday morning), English and French (`<item xml:lang="fr">`). Descriptions are truncated to ~500 chars. It ignores `?page=2` and `/2` (same 25 items).
+  - Homepage (browser, `html-list`, one page): "Today's Top Releases", 5 items (`section.nf-section-skytint figure.nf-tiles-logo`, link `a`, title `h5`, date `p`). Links are `/release/<id>/` with no slug; the page's canonical fixes them.
+  - **Search with no keyword** (browser, `html-list`): every release, newest first, 25 per page, `?pg=N` (`article.nf-tiles figure`, link `h3 a`, date `p.date:last-of-type` = "2026-11-27 11:05 AM EST | Company", description `p[lang]`). Links carry `?k=`, dropped by `dropQuery`.
+- **Covering 14 days:** 2026-11-27 run (window from 2026-11-13T00:00Z): **83 search pages → window start reached**, oldest 2026-11-12T22:55Z, **2,082 discovered, 2,068 in window**. Search pages are paced at 4 s (D59). Discovery takes ~8 min.
+- **Fetcher:** feed over HTTP; homepage, search and article pages through the **browser** (D55). Every `www` page, robots.txt and sitemaps included, answers plain HTTP with an AWS WAF challenge.
+- **Selectors:** body `article#release`; title og:title (clean); image og:image (a generated social card, `…/socialImage/<company>/facebook/<id>`); canonical present. **No publish date on the release page** (no `article:published_time`, no JSON-LD; only the dateline "November 27, 2026" and a sidebar of the company's releases), so `publishedDate` comes from the list item (feed `pubDate` with offset, or the search list's "… AM EST"): `selectors.publishedDate: null`.
+- **Clean-up:** `#contactInfo`, `#corporateNewsLogoContainer`, `#corporateLinkBack`, `p:contains("To view the source version of this press release")` (the same line without its id, seen once in 100), `img.tracker`, `p:has(> a[href^="/company/"])` ("Source: <company>" link). A "Source: X" line the issuer wrote into its own text stays (1 of 100).
+- **Spot-check (sample of 100 spread over the window, 2026-11-27):** 100/100 with fullText (1,072–20,692 chars, median 4,661); newest (Nov 27 16:05Z, Rosen Law ENSG) and oldest (Nov 13 00:00Z = 7:00 PM EST Nov 12, Gold Springs Q3 filings) start at the dateline and end at the release's own last line (disclaimer / forward-looking statements). About a third of releases are law-firm class-action notices.
+- **Language:** French releases are kept (D56/D57); the search list may be English-only (its form has a hidden `l=en`); French releases certainly reach us through the feed. To check in Phase 5.
+- **Timing per article (browser):** ~1.5–2.5 s + `delayMs` 1 s. Full extraction of ~2,070 releases ≈ 1.5–2 h (Phase 5).
+- **Blocking log:**
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-27 | homepage, `/release/…`, `/newsroom`, `/sitemap.xml`, `/robots.txt` with Node fetch (Chrome UA) | **202**, 2.5 KB page with `window.gokuProps` + `challenge.js` from `awswaf.com`, header `x-amzn-waf-action: challenge` | plain HTTP can't pass (it runs no JavaScript) |
+| 2026-11-27 | same, + full browser headers (`sec-ch-ua`, `Sec-Fetch-*`) | 202, same challenge | headers alone don't help (D13 step 2) |
+| 2026-11-27 | `feeds.newsfilecorp.com/global/Last25Stories?page=2`, `/2`, `/global/Last100Stories` | 200 same 25 items; 200 empty (25 bytes) | the feed can't page back |
+| 2026-11-27 | headless Chromium (Playwright) | challenge solves itself in ~3–5 s, sets `aws-waf-token`, page reloads with 200; next pages load directly | **works** (D13 step 3) |
+| 2026-11-27 | `/sitemap-news.php` (browser) | 5,000 release URLs (IDs 304136–326126), **no dates** | not used: can't stop at the window start |
+| 2026-11-27 | `/news/business?pg=N` | one industry, ~40 per page, empty by page 60 | not used: one industry only |
+| 2026-11-27 | `/search?k=&pg=N` at ~1 page/1.5 s | pages 1–37 fine, then **200 with no results**: "Our public search function is currently experiencing unusually high demand. Please try again in a few minutes." | rate limit (D59): `list.blockedText` + 4 s pacing + 90 s pause/retry |
+| 2026-11-27 | `/search?k=&pg=N` at 4 s pacing | 83 pages, no rate-limit page | window covered |
+| 2026-11-27 | first browser page of a session | `page.content()` read during the challenge reload gave an empty body | fetcher fixed: empty = not ready (D55) |
 
 ## 8. Zacks
 - **Start URLs:** /articles/index.php, /stock/news

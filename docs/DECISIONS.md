@@ -341,6 +341,44 @@ The fetcher throws with `err.blocked = true` (and doesn't retry a 200/202 challe
 **Why:** D31's open limit; Phase 4 sites serve challenges with 202 (AWS WAF) and 403 (Cloudflare).
 **Considered:** checking the whole body for "captcha" (an article about captchas would be flagged; the size limit prevents that).
 
+### D54. An `html-list` discoverer, configured in the schema, and `parseListDate()`
+`src/blocks/discover-html-list.js` reads any HTML page that lists articles. What to read comes from the schema: `list: { item, link, title?, date?, description?, dropQuery? }` (CSS selectors), on the entry or on one source (`toSources` passes `source.list`; discoverers now get `discover(body, url, source)`, the old ones ignore the third argument). `dropQuery` removes `?…` from links (Newsfile's search adds `?k=`, which would make the same release look like a second URL).
+List dates go through `parseListDate()` in `src/lib/time.js`: a wall time **with a written zone** ("2026-11-27 11:05 AM EST", "November 27, 2026 10:30 ET") is converted with the zone tables D48 already uses (New York DST via `Intl`); an ISO/RFC date must carry its offset. A date with no zone → null, never guessed.
+**Why:** Newsfile and GlobeNewswire both list releases only as HTML, and R-C4 forbids per-site code. **Considered:** one discoverer per site (per-site code); regex over the HTML (fragile).
+
+### D55. A browser fetcher (Playwright), chosen per entry or per source
+`src/blocks/fetch-browser.js`, `fetchers.browser`: one headless Chromium for the run (launched on first use, closed by `run.js` via `closeBlocks()`), one context (cookie jar) and tab per entry. It sends a normal Chrome User-Agent, loads the page, and waits up to 20 s while `blockReason()` (D53) says it's a challenge; challenge pages solve themselves and reload. An empty body means "still reloading", never "empty page"; after a challenge it waits for the full `load` and reads again. Still blocked → `err.blocked`; retries with backoff like http.
+A source may now set `fetcher` (default: the entry's `fetcher.list`), so one publisher can read its feed over HTTP and its HTML lists through the browser.
+**Why:** D13 step 3. Newsfile's `www` answers every plain request with an AWS WAF JavaScript challenge (202); Benzinga's Cloudflare blocks plain HTTP (403) on articles and `/news`. Playwright was planned in D3 and approved by Marwan on 2026-11-27.
+**Found while building it:** (1) Benzinga's Cloudflare blocks headless Chromium when it says "HeadlessChrome" in its User-Agent, but lets it through with a normal Chrome UA (D13 step 2 + 3 together). (2) Reading the page while the challenge reloads it returned an empty body, which the list discoverer would read as "no items" (seen on a fresh session's first search page); fixed as above. Newsfile's early paging stop at page ~37 had a second cause, a rate limit (D59).
+**Considered:** solving the challenge once in the browser and reusing its cookie over plain HTTP (the WAF also checks the client fingerprint, and it mixes two fetchers in one request path); a headed browser (opens windows; kept as a debug switch, `BROWSER_HEADED=1`).
+
+### D56. Newsfile: the site's keyword-less search pages back 14 days
+Sources: the given feed (`rss`, 25 releases ≈ 2 hours, English and French, HTTP), the given homepage ("Today's Top Releases", 5 items, browser), and the added `https://www.newsfilecorp.com/search?k=` (browser, `html-list`, `paging: { param: 'pg', maxPages: 150 }`): every release, newest first, 25 per page, with "2026-11-27 11:05 AM EST" dates. Article pages through the browser.
+**The release page has no machine-readable publish date** (no `article:published_time`, no JSON-LD; only the dateline "November 27, 2026"), so `publishedDate` is the list date (feed `pubDate` or the search list time), with `selectors.publishedDate: null`. French releases are kept, like GlobeNewswire's other languages (Marwan, 2026-11-27).
+**Why:** the feed covers ~2 hours. **Considered:** `/sitemap-news.php` (5,000 release URLs but no dates, so paging can't stop at the window start and every URL would need a page fetch); `/news/<industry>?pg=N` (one industry each); release IDs (sparse: 476 IDs for 25 releases).
+
+### D57. GlobeNewswire: page the unfiltered search, despite robots.txt
+Sources: the two given URLs fetched exactly as written (`paging: null`: `24HOURS?pageSize=10` = 10 releases, `subject/prs` = 10), plus the added `https://www.globenewswire.com/en/search?pageSize=50` with `paging: { param: 'page', maxPages: 250 }`: every release in every language, newest first, 50 per page (the site's maximum), ~130 pages for 14 days. All three use `html-list` (same page layout). HTTP works (Node's fetch gets 200; curl gets Akamai 403). Article date: `og:article:published_time`; body `[itemprop="articleBody"]`, which holds only the release text.
+**robots.txt says `Disallow: /en/search`**, and FMP's given start URLs are `/en/search` pages. Marwan's decision (2026-11-27): page `/en/search`, because FMP gave those URLs, at 1 request a second, one at a time, and log the conflict (SITES.md, README).
+**All languages** (Marwan): the given 24-hour URL lists them (~7% are French, German, Indonesian…). Most fail the English pre-filter and become `others` with no LLM call: a known limit for the README.
+**Why:** R-D2 + R-D3. **Considered:** `7DAYS` (stops at 7 days); a date range in the URL (not supported: `/en/search/date/2026-11-13` → 0 results); the sitemaps (robots-allowed, but the current month's file is empty until the month ends, `latest.xml` holds ~1 day and the Google News sitemap 2 days); `/en/search/lang/en` (English only).
+
+### D58. A `sitemap` discoverer; `lastmod` is a list date, never a publish date
+`src/blocks/discover-sitemap.js` reads a `<urlset>`: `publishedDate` only from a Google News `<news:publication_date>`, `title` from `<news:title>`. `<lastmod>` goes to `listDate`. `listDateOf(item)` (= `publishedDate ?? listDate`, `src/lib/paging.js`) decides paging stops and the window pre-filter; the article page's own date decides at the end.
+- lastmod ≥ the publish date, so a pre-filter on it never drops an in-window article. It can let in an old article edited recently: fetched, then dropped by its page date (`droppedOutsideWindow` in stats).
+- An article with **no provable publish date** (e.g. blocked, and listed only with a lastmod) is **not written** (a guessed date would break R-D1 silently), but it is counted and listed (`droppedNoDate`, `droppedNoDateUrls`) and the validator shows each one.
+
+Benzinga sources: the given Google News sitemap (~340 articles, 2 days, publish dates), the given `/news` (browser, `html-list`, ~25 cards without dates), and the added `latest.xml` from robots.txt (10,000 URLs ≈ 5 weeks, sorted by lastmod, one HTTP request). Articles through the browser with `delayMs: 2000`.
+**Why:** R-D3; the Google News sitemap covers 2 days by design. **Considered:** the monthly archive sitemaps (no dates at all); `/feed` (full bodies, but 25 "top stories" and it ignores `?page`); paging `/news` (cards have no dates, and it needs the browser for every page).
+
+### D59. Rate-limited list pages: recognized, paced, retried after a pause
+Newsfile's search answers ~37 quick requests (~1 a second), then serves a normal-looking page with **no results** and the text "Our public search function is currently experiencing unusually high demand. Please try again in a few minutes." Paging read it as an empty page (= the end of the list) and stopped at Nov 21, short of the window start. Three generic, schema-driven fixes:
+- `list.blockedText` (html-list): a page containing that text throws `{ blocked, rateLimited }`, so it is never "empty".
+- A source can set its own `delayMs` for its list pages (fetchers take an optional `opts.delayMs`): Newsfile's search uses 4,000 ms; its article pages keep the entry's pace.
+- `discoverPages` retries a **rate-limited** page (HTTP 429 or `rateLimited`) after a 90 s pause, up to 3 times (D13 step 4), counted as `blockedRetries`; then it stops with `page error`, never `empty page`. A hard block (e.g. Cloudflare 403) is not retried: it isn't lifted in minutes.
+**Why:** R-D3; it also stops a silent coverage loss from looking like a normal end of list. **Considered:** treating every empty page after page 1 as an error (true for these lists, but a real last page would then look like a failure); a fixed long delay for every source (slows every site for one site's limit).
+
 ---
 
 ## Open questions (decide in the phase noted)

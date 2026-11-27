@@ -51,11 +51,28 @@ const ENTRIES = [
   {
     name: 'GlobeNewswire',
     site: 'globenewswire.com',
+    enabled: false, // configured, verified in its own commit (Phase 4)
     defaultType: 'pressReleases', // a wire: companies' own announcements (D47)
+    // Node's fetch gets 200 here; curl gets an Akamai 403 (it's the client fingerprint, not the headers).
     startUrls: [
-      'https://www.globenewswire.com/en/search/date/24HOURS?pageSize=10&page=1',
-      'https://www.globenewswire.com/en/search/subject/prs',
+      // The given URLs (R-D2), fetched exactly as written: 10 releases of the last 24 hours, and a subject page.
+      { url: 'https://www.globenewswire.com/en/search/date/24HOURS?pageSize=10&page=1', paging: null },
+      { url: 'https://www.globenewswire.com/en/search/subject/prs', paging: null },
+      // Added route (D57): the same search with no filter lists every release (all languages), newest first.
+      // 50 per page is the site's maximum; ~130 pages cover 14 days. The sitemaps don't cover the window.
+      { url: 'https://www.globenewswire.com/en/search?pageSize=50', paging: { param: 'page', maxPages: 250 } },
     ],
+    discover: 'html-list',
+    list: {
+      item: '.recentNewsH li',
+      link: '.mainLink a',
+      date: '.date-source span:first-child', // "November 27, 2026 10:30 ET"
+      description: '.newsTxt',
+    },
+    selectors: {
+      body: '[itemprop="articleBody"]', // only the release text; tags and contacts are outside it
+      publishedDate: { css: 'meta[property="og:article:published_time"]', attr: 'content' }, // "2026-11-27T15:20:00Z"
+    },
   },
   {
     name: 'Fox Business',
@@ -70,10 +87,36 @@ const ENTRIES = [
   {
     name: 'Benzinga',
     site: 'benzinga.com',
+    enabled: false, // configured, verified in its own commit (Phase 4)
+    // Cloudflare blocks plain HTTP on article pages and /news ("Sorry, you have been blocked", 403),
+    // and headless Chromium with its default "HeadlessChrome" user agent too. The browser fetcher,
+    // which sends a normal Chrome user agent, gets the pages (D55). The sitemaps work over HTTP.
+    fetcher: { list: 'http', article: 'browser' },
+    delayMs: 2000,
     startUrls: [
-      'https://www.benzinga.com/sitemap-benzinga.com/www/googlenews.xml',
-      'https://www.benzinga.com/news',
+      // The given Google News sitemap (R-D2): ~340 articles, ~2 days, with publish dates and titles.
+      { url: 'https://www.benzinga.com/sitemap-benzinga.com/www/googlenews.xml', discover: 'sitemap', paging: null },
+      // The given /news page: ~25 cards, no dates on the cards (the article page's date decides).
+      {
+        url: 'https://www.benzinga.com/news',
+        fetcher: 'browser',
+        discover: 'html-list',
+        paging: null,
+        list: { item: '.post-card', link: 'a.post-card-article-link', title: 'span.inline' },
+      },
+      // Added route (D58): the "latest" sitemap from robots.txt, 10,000 URLs (~5 weeks) in one request,
+      // newest first by lastmod. lastmod is a modification date, so it's only used to pre-filter.
+      { url: 'https://www.benzinga.com/sitemap-benzinga.com/www/latest.xml', discover: 'sitemap', paging: null },
     ],
+    selectors: {
+      title: 'h1.article-title', // og:title adds " - Company (NASDAQ:TICKER)"
+      body: '.article-content-body-only',
+      remove: [
+        '.ad-reserved', // ad slots, incl. the "Don't Miss" widget
+        '.read-next-block', // "Read Next" card
+        'p.copyright',
+      ],
+    },
   },
   {
     name: 'CryptoPotato',
@@ -103,8 +146,55 @@ const ENTRIES = [
   {
     name: 'Newsfile',
     site: 'newsfilecorp.com',
+    enabled: true,
     defaultType: 'pressReleases', // a wire: companies' own announcements (D47)
-    startUrls: ['https://feeds.newsfilecorp.com/global/Last25Stories', 'https://www.newsfilecorp.com/'],
+    // www.newsfilecorp.com answers every plain HTTP request with an AWS WAF JavaScript challenge (202),
+    // so its pages go through the browser (D55). The feed lives on another host and works over HTTP.
+    fetcher: { list: 'http', article: 'browser' },
+    startUrls: [
+      // The given feed (R-D2): the newest 25 releases (~2 hours), English and French.
+      { url: 'https://feeds.newsfilecorp.com/global/Last25Stories', discover: 'rss', paging: null },
+      // The given homepage: "Today's Top Releases" (5 items).
+      {
+        url: 'https://www.newsfilecorp.com/',
+        fetcher: 'browser',
+        discover: 'html-list',
+        paging: null,
+        list: { item: 'section.nf-section-skytint figure.nf-tiles-logo', link: 'a', title: 'h5', date: 'p' },
+      },
+      // Added route (D56): the site's search with no keyword lists every release, newest first,
+      // 25 per page, paged with ?pg=N. ~85 pages cover 14 days.
+      {
+        url: 'https://www.newsfilecorp.com/search?k=',
+        fetcher: 'browser',
+        discover: 'html-list',
+        paging: { param: 'pg', maxPages: 150 },
+        // The search is rate-limited: ~37 pages at 1 a second, then "unusually high demand" (D59).
+        delayMs: 4000,
+        list: {
+          item: 'article.nf-tiles figure',
+          link: 'h3 a',
+          date: 'p.date:last-of-type', // "2026-11-27 11:05 AM EST | Company"
+          description: 'p[lang]',
+          dropQuery: true, // links carry "?k=": the same release as in the feed
+          blockedText: 'Our public search function is currently experiencing unusually high demand',
+        },
+      },
+    ],
+    selectors: {
+      body: 'article#release',
+      // The release page has no machine-readable publish date (no article:published_time, no JSON-LD),
+      // so the date comes from the list item (feed pubDate or the search list's "… AM EST").
+      publishedDate: null,
+      remove: [
+        '#contactInfo', // "Contact information:" block
+        '#corporateNewsLogoContainer', // logo
+        '#corporateLinkBack', // "To view the source version of this press release, please visit …"
+        'p:contains("To view the source version of this press release")', // the same line without its id
+        'img.tracker',
+        'p:has(> a[href^="/company/"])', // "Source: <company>"
+      ],
+    },
   },
   {
     name: 'Zacks',

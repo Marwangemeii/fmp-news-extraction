@@ -24,12 +24,13 @@ const isRetryable = (status) => status === 429 || status >= 500;
 /**
  * @param {string} url
  * @param {{ delayMs?: number }} [entry] the schema entry (only `delayMs` is used)
+ * @param {{ delayMs?: number }} [opts] overrides the entry's delayMs for this call
  * @returns {Promise<{ url: string, body: string }>} `url` is the final URL after redirects
  * @throws {Error} after the last retry; `err.status` is set when the server answered with an HTTP error,
  *   and `err.blocked` when the answer was a block or challenge page (even with status 200/202, D53)
  */
-export async function fetchHttp(url, entry = {}) {
-  const delayMs = entry.delayMs ?? 1000;
+export async function fetchHttp(url, entry = {}, opts = {}) {
+  const delayMs = opts.delayMs ?? entry.delayMs ?? 1000; // a source may pace its list pages slower (D59)
   let lastError;
 
   for (let attempt = 0; attempt <= RETRIES; attempt++) {

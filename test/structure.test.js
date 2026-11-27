@@ -97,6 +97,7 @@ test('every enabled entry names building blocks that exist in the registry', () 
       ['fetchers', p.fetcher?.list],
       ['fetchers', p.fetcher?.article],
       ...toSources(p).map((s) => ['discoverers', s.discover]), // each source's discoverer
+      ...toSources(p).map((s) => ['fetchers', s.fetcher]), // each source's list fetcher (D55)
       ['extractors', p.extract],
       ['labellers', p.label],
     ];
