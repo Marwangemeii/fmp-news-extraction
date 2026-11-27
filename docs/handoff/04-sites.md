@@ -1,4 +1,4 @@
-# Handoff 04: Remaining sites, session A (Newsfile, GlobeNewswire, Benzinga)
+# Handoff 04: Remaining sites (session A: Newsfile, GlobeNewswire, Benzinga; session B: Business Wire, Zacks, Fox Business, Investing.com, Reuters)
 
 > Written by Claude Code, for the orchestrator (Claude in a separate chat, who cannot see the code). Updated per site.
 
@@ -171,3 +171,114 @@ $env:LABEL=''; $env:LLM_BUDGET_USD='0.3'; npm start -- --only Newsfile --limit 1
 
 ## 10. Suggested next step
 Session B: Business Wire, Zacks, Fox Business, Investing.com, Reuters. The building blocks from this session (browser fetcher, html-list, sitemap, date slices, rate-limit handling, circuit breaker) should cover most of them as schema-only entries. Before Phase 5: decide the budget question (item 8) and whether GlobeNewswire's runtime needs 2 requests at a time.
+
+
+---
+
+# Session B (Business Wire, Zacks, Fox Business, Investing.com, Reuters) + proxy hook + cost measurement
+
+## B1. Goal
+Same method as session A for the last five sites; plus the D13 proxy hook (`PROXY_URL`), a CryptoPotato recheck, and a labelled cost measurement (GlobeNewswire, Newsfile) with proposed cost cuts (not built). Marwan authorized a commit per site and a push at the end.
+
+## B2. What was done (commits)
+- `3621034` step 0: `src/lib/proxy.js` + `PROXY_URL` (D63), CryptoPotato recheck logged.
+- `7ecfba7` Business Wire (D64): per-entry `headers`; one-page date slices count as complete.
+- `face80e` Zacks findings + Imperva detection (D65).
+- `f4433c9` Fox Business (D66): `{ jsonld: 'datePublished' }` selector.
+- `3085195` Investing.com (D67, D68): RSS zone-less dates fixed, `list.dateZone`, `<enclosure>` image, source merge fills gaps, `typeByUrl`.
+- `29ffd0d` Zacks (D69) + Reuters (D70): `dayZone` + day precision, strict page dates, browser returns raw XML, homepage-redirect guard, `disabledReason`.
+- Tests: 94 → **104** (proxy 2, slices 1, merge 1, JSON-LD 1, page dates 1, homepage redirect 1, RSS dates 1, typeOf 1, Imperva 1).
+
+## B3. How it works (key snippets)
+**Proxy (D63), no dependency:**
+```js
+// src/lib/proxy.js
+export function applyHttpProxy() {            // run.js calls it at startup
+  const raw = proxyUrl(); if (!raw) return 'off';
+  if (typeof http.setGlobalProxyFromEnv !== 'function') return 'unsupported'; // Node 22: browser only
+  http.setGlobalProxyFromEnv({ HTTP_PROXY: raw, HTTPS_PROXY: raw }); return 'on';
+}
+// fetch-browser.js: chromium.launch({ headless, proxy: browserProxy() })   // { server, username, password }
+```
+Tested with a local logging CONNECT proxy: both fetchers' connections went through it when set; none when unset. `HTTPS_PROXY` set at runtime or via `.env` does **not** work (Node reads it before startup).
+
+**Business Wire, schema only (D64):**
+```js
+headers: { 'sec-ch-ua': '"Chromium";v="131", "Google Chrome";v="131", "Not_A Brand";v="24"', 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"' },
+startUrls: [
+  { url: 'https://www.businesswire.com/newsroom', discover: 'html-list', paging: null, list: { item: 'li', link: 'a' } }, // given, 403
+  { url: 'https://www.businesswire.com/sitemap/google-news/{from}.xml.gz', discover: 'sitemap', sliceDays: 1, paging: null },
+],
+// controller: sliceComplete = stop === 'empty page' || stop === 'single page'
+```
+**Date rules now (D67, D69):** a date with no written zone is never parsed in the machine's zone (`new Date('2026-11-27 18:21:02')` gave 16:21Z in Cairo). RSS: null unless `list: { dateZone: 'UTC' }`. Page dates: must carry an offset; a bare day only with `dayZone`:
+```js
+publishedDate: { jsonld: 'datePublished', dayZone: 'ET' }   // Zacks: "2026-11-27" → 2026-11-27T05:00:00Z, publishedDatePrecision 'day'
+```
+`publishedDatePrecision` goes to the trace and `stats.dayOnlyDates` (+ one R-A1 validator warning), not to the record.
+
+**Merge (D67):** a later source fills fields the earlier one lacked: `for (const [k, v] of Object.entries(item)) if (prev[k] == null && v != null) prev[k] = v;`
+
+**Type (D68):** `typeOf(entry, symbol, url)`: `entry.typeByUrl` first (`/news/forex-news/` → forex, `/news/cryptocurrency-news/` → crypto), then defaultType, then general + symbol → stock. Also used by `toRecord` for records without a labeller.
+
+## B4. Decisions
+D63 proxy · D64 Business Wire · D65 Imperva + Zacks findings · D66 Fox Business · D67 Investing.com, zone-less dates, merge · D68 `typeByUrl` (closes D47's forex) · D69 Zacks day-only dates (**Marwan**) · D70 Reuters not collected (**Marwan**).
+
+## B5. Deviations
+- Zacks and Reuters needed Marwan's decisions mid-session (day-only dates; robots.txt legal notice).
+- Three silent date bugs found and fixed (RSS and page dates read in local time; `"2026-11-27"` read as 00:00Z).
+- A first-source-wins merge bug hid Investing feed dates (fixed, D67).
+- A Cloudflare 403-challenge wait in the browser was tried and reverted (didn't clear; +75 s per article).
+
+## B6. Results per site (2026-11-27, window from 2026-11-13T00:00Z)
+| Site | Route | In window | Covers 14 days | fullText | LLM $/article |
+|---|---|---|---|---|---|
+| Business Wire | 15 daily Google News sitemaps (HTTP + client hints) | **6,416** | yes | null, `blocked` (Akamai Bot Manager, also in headless/headed Chromium) | $0 |
+| Fox Business | given pages + news & articles sitemaps (HTTP) | **131** | yes | 99/99 in sample | $0.00015 (limit 10) |
+| Investing.com | given `/news/` (browser) + 15 RSS feeds | **138** | **no** (oldest Nov 23) | null, `blocked` (Cloudflare after the 1st page) | $0 |
+| Zacks | `/articles/index.php` + news sitemap (browser, Imperva) | **510** | **no** (~1.5 days) | 90/90 in sample; 10/100 removed (redirect home) | $0.00061 (limit 10) |
+| Reuters | not collected (D70) | – | – | – | – |
+All validate PASS (warnings only). Sample/spot-checks in SITES.md.
+
+**CryptoPotato recheck:** 3 uncached recent articles → **403 on all 3**, Cloudflare managed challenge (`cf-mitigated: challenge`, "Just a moment..."); the browser didn't clear it either (75 s). Phase 5: ~235 cached pages are fine; new ones will be `blocked`. Production: proxy.
+
+## B7. Cost measurement (labelled `--sample 100`, `LLM_BUDGET_USD=0.3`, Haiku 5.5 $0.10/$0.50 per MTok)
+| | GlobeNewswire | Newsfile |
+|---|---|---|
+| Pre-filter pass | 73 / 100 | 92 / 100 |
+| LLM calls | 79 (73 classify + 6 extract) | 100 (92 + 8) |
+| Labels | earnings 3, dividends 3 | earnings 6, splits 1, ipos 1 |
+| Cost | $0.0431 → **$0.00043/article** | $0.0656 → **$0.00066/article** |
+| Tokens in / out | 278,914 / 30,432 | 330,336 / 65,065 |
+| Law-firm notices | 14 (14% of cost), 0 labelled | **49 (35% of cost)**, 0 labelled |
+| Non-English | 10 (5% of cost), 0 labelled | 0 |
+| Classify-only → others | 71% of cost | 73% of cost |
+| Passed on ONE weak keyword, then others | 26 ("results" 10, "sales" 6, "distributions" 5…) | 33 ("results" 28) |
+Errors 0, K4/K11 drops 0. (Session A's GNW holiday sample was $0.00016/article; this one is a normal mix.)
+
+**Projected full-run LLM cost (all 10 sites):** GlobeNewswire 9,919 × $0.00043 = $4.28 · Newsfile 2,099 × $0.00066 = $1.38 · Zacks 510 × $0.00061 = $0.31 · TechCrunch + CryptoPotato ~$0.10 · Fox Business $0.02 · Business Wire, Benzinga, Investing.com $0 (fullText null) · Reuters $0 → **≈ $6.1** (range ~$4.5–8: GlobeNewswire's earnings-heavy days drive it). Credit left ≈ **$9.15** (session B spent $0.12). **Phase 5 + Phase 7 would be ~$12 if both run cold**; Phase 7 is cheap only if Phase 5 runs with `CACHE=1` and `PROMPT_VERSION` doesn't change after it (then only the ~2 new days are billed, ~$1).
+
+**Proposed cost cuts (not built; for Marwan + orchestrator):**
+1. **Law-firm class-action notice rule → `others`, no LLM call, traced** (title signature: firm names / "Law Firm" / "class action" + "investors"/"shareholders"/"deadline"). Saves ~**$1.1/run (18%)**. Recall risk: 0 of 63 such notices got a label. Risk: an issuer's own release about a settlement; mitigate by requiring a law-firm signature, and trace the rule.
+2. **Prompt caching of the system prompts** (classify ~600 tokens, extract ~1,000; Haiku 5.5's minimum is 512): cached reads bill at ~0.1×. Saves ~**$0.5 (8–9%)**, no quality risk, a one-line `cache_control` change; verify `cache_read_input_tokens` > 0.
+3. **Classify with thinking disabled** (Haiku 5.5 allows `disabled` at effort ≤ high): output is 35% (GNW) to 50% (Newsfile) of cost, mostly classify thinking. Could save ~**$1.5–2**. Quality risk: must pass the eval first (~$0.05).
+4. **Smaller classify input** (`CLASSIFY_BODY_CHARS` 6,000 → ~3,000): ~**$0.5**; the subject sits in the opening; eval needed.
+5. **Tighter wire pre-filter** (two keyword hits, or one strong word; "results" alone is weak): ~**$0.5–0.8**; recall risk, check on the gold set.
+6. **Message Batches API** (50% off everything): ~**$3**, but async (minutes to hours), a two-pass labeller (classify batch → extract batch), the most code. Only if the budget forces it.
+7. Not recommended: skipping non-English wire releases (~$0.2; loses French earnings like Trans Mountain).
+Recommended now: **1 + 2** (≈ −$1.6, ~$4.5/run, no quality risk), then 3 if the eval holds; and run Phase 5 with `CACHE=1`.
+
+## B8. Known issues / open questions
+1. **Coverage gaps for the README:** Investing.com (~140 of an unknown hundreds/day, feeds only), Zacks (~1.5 days), Benzinga (~340 of ~2,800), Business Wire (all 6,416 but no text), Reuters (none). Each is logged with its ladder in SITES.md.
+2. Zacks' day is assumed to be New York time (Zacks is in Chicago: 1-hour difference only between 23:00 and 24:00 ET). Marwan approved ET.
+3. Business Wire publishes many non-English releases (Nov 18: 166 of 796); they're written with title/date only (no text) anyway.
+4. Phase 5 runtime adds Zacks (~510 browser pages, ~25 min) and Business Wire (~16 requests).
+5. Node 22: the HTTP fetcher can't use `PROXY_URL` (warns); Node 24 is installed here.
+
+## B9. How to verify
+```
+npm test                                                                   # 104 pass
+$env:CACHE=1; $env:LABEL='placeholder'; npm start -- --only "Business Wire" --sample 100; npm run validate
+$env:LABEL=''; $env:LLM_BUDGET_USD='0.3'; npm start -- --only Zacks --limit 10; npm run validate
+$env:PROXY_URL='http://127.0.0.1:8899'; npm start -- --only "Fox Business" --limit 1   # needs a proxy listening
+```
