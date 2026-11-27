@@ -18,7 +18,8 @@ const STATS = 'output/stats.json';
 const { values } = parseArgs({
   options: {
     only: { type: 'string' }, // dev: run one publisher by its schema name, e.g. --only "<name>"
-    limit: { type: 'string' }, // dev: at most n articles per publisher
+    limit: { type: 'string' }, // dev: the newest n articles per publisher
+    sample: { type: 'string' }, // dev: n articles per publisher, spread from the newest to the oldest day
   },
 });
 
@@ -34,11 +35,27 @@ if (values.only) {
   }
 }
 
-const limit = values.limit ? Number(values.limit) : undefined;
-if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
-  console.error(`--limit must be a positive integer, got "${values.limit}"`);
+/** A positive integer CLI option, or undefined if not given. */
+function count(flag) {
+  if (values[flag] === undefined) return undefined;
+  const n = Number(values[flag]);
+  if (!(Number.isInteger(n) && n > 0)) {
+    console.error(`--${flag} must be a positive integer, got "${values[flag]}"`);
+    process.exit(1);
+  }
+  return n;
+}
+const limit = count('limit');
+const sample = count('sample');
+if (limit && sample) {
+  console.error('use --limit (newest n) or --sample (n spread over the window), not both');
   process.exit(1);
 }
+
+// Dev switch: LABEL=placeholder runs every entry with that labeller (no LLM calls, no API key needed).
+// It applies to all entries alike, so no publisher is special-cased.
+const labelOverride = process.env.LABEL || null;
+if (labelOverride) selected = selected.map((p) => ({ ...p, label: labelOverride }));
 
 // Fail fast, before a long crawl, if the LLM labeller will run without a key. The key itself is never printed.
 if (selected.some((p) => p.enabled && p.label === 'llm')) {
@@ -53,9 +70,12 @@ if (selected.some((p) => p.enabled && p.label === 'llm')) {
 const cache = process.env.CACHE === '1'; // D15: dev cache for article pages
 const runAt = new Date();
 const window = getWindow(runAt);
-console.log(`Window: ${window.start.toISOString()} → ${window.end.toISOString()}${cache ? ' · CACHE=1' : ''}`);
+console.log(
+  `Window: ${window.start.toISOString()} → ${window.end.toISOString()}${cache ? ' · CACHE=1' : ''}` +
+    `${labelOverride ? ` · LABEL=${labelOverride}` : ''}${sample ? ` · --sample ${sample}` : ''}${limit ? ` · --limit ${limit}` : ''}`,
+);
 
-const { records, traces, stats } = await runAll(selected, { registry, window, limit, cache });
+const { records, traces, stats } = await runAll(selected, { registry, window, limit, sample, cache });
 await writeJsonl(OUTPUT, records);
 await writeJsonl(TRACES, traces);
 console.log(`Wrote ${records.length} articles to ${OUTPUT} and ${traces.length} traces to ${TRACES}`);
@@ -82,6 +102,8 @@ const runStats = {
   runAt: runAt.toISOString(),
   window: { start: window.start.toISOString(), end: window.end.toISOString() },
   limit: limit ?? null,
+  sample: sample ?? null,
+  label: labelOverride, // null = each entry's own labeller
   durationMs: Date.now() - runAt.getTime(),
   llm,
   publishers: stats,

@@ -36,7 +36,9 @@ Take-home task for FMP (Financial Modeling Prep): collect every article that 10 
 - `npm install`
 - `npx playwright install chromium`: needed once, for the browser fetcher
 - `npm start`: runs the whole schema and writes `output/articles.jsonl` + `output/stats.json`
-- `npm start -- --only <publisher> --limit <n>`: dev run of one publisher, n articles
+- `npm start -- --only <publisher> --limit <n>`: dev run of one publisher, the newest n articles
+- `npm start -- --only <publisher> --sample <n>`: full discovery, then n articles spread from the newest to the oldest day (D52)
+- `LABEL=placeholder npm start …` (PowerShell: `$env:LABEL='placeholder'`): no LLM calls, no API key needed (D52). Clear it with `$env:LABEL=''`
 - `CACHE=1 npm start` (PowerShell: `$env:CACHE=1; npm start`): dev cache for article pages in `.cache/` (D15) and LLM answers in `.cache/llm/` (D36)
 - `npm test`
 - `npm run validate`: checks `output/articles.jsonl` against the requirements (run time from `output/stats.json`; `-- --run-at <iso>` overrides)

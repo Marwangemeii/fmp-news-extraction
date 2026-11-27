@@ -24,8 +24,11 @@ export const MAX_TOKENS = { classify: 4000, extract: 8000 }; // classify hit 200
 /** Classify sees only the top of the body: the label rule is about the subject, which lives there. */
 export const CLASSIFY_BODY_CHARS = 6000;
 
-/** LLM calls in flight at once, per publisher. */
-export const CONCURRENCY = 4;
+/**
+ * Articles being labelled at once, across ALL publishers (D51): one shared limiter in the controller.
+ * Each article's calls run one after another, so this is also the max number of LLM calls in flight.
+ */
+export const LLM_CONCURRENCY = Number(process.env.LLM_CONCURRENCY) || 4;
 
 /** USD per million tokens (input / output), from the Claude API pricing table (2026-11). */
 export const PRICES = {

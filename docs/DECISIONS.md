@@ -186,7 +186,7 @@ Articles whose page has no text body (e.g. CryptoPotato `/video/` posts: a title
 
 `stats.json` counts them per publisher (`"fullTextNull": { "noBody": 2, "blocked": 0, "error": 0 }`) and lists them (`fullTextNullUrls: [{ url, reason }]`). The validator shows the reason in each R-A9 warning, and **fails** on a null with no recorded reason. The reasons live in `stats.json`, not in `articles.jsonl`, so the deliverable's record shape stays as specified.
 **Why:** Marwan: "every article" comes first, and skipping them silently loses data. A null must never be unexplained (R-A9), and the README needs the counts.
-**Limit:** a block page served with status 200 (a challenge page) would be counted as `noBody`. Phase 4's blocking ladder (D13) detects those.
+**Limit:** a block page served with status 200 (a challenge page) would be counted as `noBody`. Phase 4's blocking ladder (D13) detects those. **Closed by D53** (2026-11-27).
 **Considered:** skipping body-less pages (silent data loss); a reason field in each record (changes the deliverable's shape).
 
 ### D32. `text` fallback chain: feed/API description → page meta description → first paragraph
@@ -316,6 +316,30 @@ Same fixtures, same classify (Haiku), prompt v2:
 | claude-sonnet-5-5 | 126 / 0 / 4 | 21 / 21 | $0.39 |
 
 Sonnet gets Nvidia's `period`, `calendarYear` and figure period (Haiku misses them), but misses `calendarYear` on T3 and CMB.TECH (Haiku gets them). One run each; the models aren't fully deterministic. **Decision: Haiku for both stages (D34 stands).** About 13× the cost for one more key figure, with the same field accuracy, doesn't pay on a $10 budget.
+
+### D51. Publishers run in parallel; one LLM limiter for the whole run
+- `runAll` starts every enabled entry at once (`Promise.all`) and joins the results **in schema order** (records and `stats.json` keys), whatever order they finish in. Inside a publisher nothing changes: list pages and article pages are still fetched **one at a time** with the entry's `delayMs`, so each site sees exactly the same load as before.
+- **One shared LLM limiter** (`createLimiter(LLM_CONCURRENCY)` in `src/lib/pool.js`, created once in `runAll`): at most `LLM_CONCURRENCY` articles (default 4, `src/llm/config.js`, env `LLM_CONCURRENCY`) are being labelled at once across **all** publishers. An article's calls (classify, then extract) run one after another, so that is also the maximum number of LLM calls in flight. It replaces the per-publisher `CONCURRENCY = 4`, which would have become 4 × 10 = 40 calls in flight with parallel publishers.
+- A source whose page 1 fails (e.g. blocked) no longer fails the whole publisher: it's recorded in `stats.sources[].error` with `pagingStop: "page 1 failed"`, the other sources still run, and the validator shows a warning.
+
+**Why:** the wires are thousands of articles each (GlobeNewswire ~6,000 in 14 days). Sequentially, three sites alone would take ~8 h; in parallel the run takes about as long as the slowest site. Marwan chose 1 request at a time per site (politeness unchanged) and asked for the global LLM limit now, because new API accounts have low rate limits.
+**Considered:** 2 requests at a time per site (faster, more block risk; not now); a limiter per publisher (multiplies with parallel publishers).
+
+### D52. Dev switches: `LABEL=placeholder` and `--sample N`
+- `LABEL=<labeller>` (env) runs **every** selected entry with that labeller, so `LABEL=placeholder` makes a run with no LLM calls and no API key. It applies to all entries alike (no site is special-cased), is printed on the "Window:" line, written to `stats.json` (`label`), and the validator warns that labels aren't real.
+- `--sample N`: after **full** discovery (every list page, so `windowStartReached` and `inWindow` are exact), only N articles are fetched, spread evenly over the date-sorted list (`spreadSample()`: the newest, the oldest, and evenly in between). `--limit N` still means "the newest N". `stats.json` gets `sample` and per-publisher `processed`; the validator warns that it's not a full collection.
+
+**Why:** Phase 4 verifies each site's coverage and selectors without the cost of a full extraction (thousands of page fetches) or the LLM ($10 budget). Marwan: the full run of all sites happens once, in Phase 5. `--limit` alone can't show the oldest days.
+
+### D53. Block and challenge pages are detected, even with status 200 (closes the D31 limit)
+`src/lib/blocked.js` `blockReason({ status, headers, body })` says why a response is a block, or null:
+- status 401/403/429/451;
+- a vendor header that marks a challenge: `x-amzn-waf-action` (AWS WAF, e.g. Newsfile's 202 challenge), `cf-mitigated` (Cloudflare);
+- on **small pages only** (< 30 KB, where challenge pages live), a block-page `<title>`: "Just a moment…", "Attention Required! | Cloudflare", "Access Denied", captcha / verify-you're-human wording, or the AWS WAF challenge script.
+
+The fetcher throws with `err.blocked = true` (and doesn't retry a 200/202 challenge), so the controller counts the article as `blocked`, not `noBody`, and the dev cache never stores a challenge page. Generic: it names bot-protection vendors, never a publisher.
+**Why:** D31's open limit; Phase 4 sites serve challenges with 202 (AWS WAF) and 403 (Cloudflare).
+**Considered:** checking the whole body for "captcha" (an article about captchas would be flagged; the size limit prevents that).
 
 ---
 

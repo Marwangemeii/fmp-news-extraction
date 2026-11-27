@@ -9,11 +9,9 @@ import { canonicalizeUrl } from './lib/url.js';
 import { isInWindow } from './lib/window.js';
 import { toSources, discoverPages } from './lib/paging.js';
 import { cached } from './lib/cache.js';
-import { mapLimit } from './lib/pool.js';
-import { CONCURRENCY } from './llm/config.js';
-
-/** HTTP statuses that mean the site refused us, as opposed to a broken page or network (D31). */
-const BLOCKED_STATUSES = [401, 403, 429, 451];
+import { createLimiter } from './lib/pool.js';
+import { BLOCKED_STATUSES } from './lib/blocked.js';
+import { LLM_CONCURRENCY } from './llm/config.js';
 const LABELS = ['earnings', 'dividends', 'splits', 'ipos', 'others'];
 
 /**
@@ -31,41 +29,65 @@ function pick(registry, kind, name) {
 }
 
 /**
- * Runs all entries in order; one failing publisher never stops the others (R-D4).
+ * Runs all entries at the same time (D51). Each site still gets one request at a time with its own
+ * delay, so running them side by side is as polite as one after another, and the run takes as long as
+ * the slowest site instead of the sum. One failing publisher never stops the others (R-D4).
+ * The output keeps the schema order, whatever order the publishers finish in.
  *
  * @param {object[]} publishers schema entries (already filtered by --only in run.js)
- * @param {{ registry: object, window: { start: Date, end: Date }, limit?: number, cache?: boolean }} opts
+ * @param {{ registry: object, window: { start: Date, end: Date }, limit?: number, sample?: number,
+ *           cache?: boolean }} opts  limit = the newest n articles; sample = n articles spread over the window
  * @returns {Promise<{ records: object[], traces: object[], stats: Record<string, object> }>}
  *   output records, one labeller trace per record (D9), per-publisher stats
  */
-export async function runAll(publishers, { registry, window, limit, cache = false }) {
-  const records = [];
-  const traces = [];
+export async function runAll(publishers, { registry, window, limit, sample, cache = false }) {
   const stats = {};
   const seen = new Set(); // canonical URLs already written, across all publishers (R-D5)
   const spend = { usd: 0 }; // LLM spend of the whole run, shared by every labeller call (budget cap)
+  const llmLimit = createLimiter(LLM_CONCURRENCY); // shared: at most LLM_CONCURRENCY articles labelled at once, run-wide
 
-  for (const entry of publishers) {
-    if (!entry.enabled) {
-      console.log(`[skip] ${entry.name}: enabled: false (not configured yet)`);
-      stats[entry.name] = { enabled: false };
-      continue;
-    }
-    // Filled in as the run goes, so a publisher that fails midway still reports what it reached.
-    const s = newStats();
-    stats[entry.name] = s;
-    const started = Date.now();
-    try {
-      const out = await runPublisher(entry, { registry, window, limit, cache, seen, s, spend });
-      records.push(...out.records);
-      traces.push(...out.traces);
-    } catch (err) {
-      s.failed = err.message;
-      console.error(`[${entry.name}] FAILED: ${err.message}`);
-    }
-    s.durationMs = Date.now() - started;
-  }
-  return { records, traces, stats };
+  const outs = await Promise.all(
+    publishers.map(async (entry) => {
+      if (!entry.enabled) {
+        console.log(`[skip] ${entry.name}: enabled: false (not configured yet)`);
+        stats[entry.name] = { enabled: false };
+        return null;
+      }
+      // Filled in as the run goes, so a publisher that fails midway still reports what it reached.
+      const s = newStats();
+      stats[entry.name] = s;
+      const started = Date.now();
+      try {
+        return await runPublisher(entry, { registry, window, limit, sample, cache, seen, s, spend, llmLimit });
+      } catch (err) {
+        s.failed = err.message;
+        console.error(`[${entry.name}] FAILED: ${err.message}`);
+        return null;
+      } finally {
+        s.durationMs = Date.now() - started;
+      }
+    }),
+  );
+
+  // Stats in schema order too (above, they were added in finishing order).
+  const ordered = Object.fromEntries(publishers.map((p) => [p.name, stats[p.name]]));
+  const done = outs.filter(Boolean);
+  return { records: done.flatMap((o) => o.records), traces: done.flatMap((o) => o.traces), stats: ordered };
+}
+
+/**
+ * Dev option `--sample n`: n items spread evenly over a newest-first list, so a sample covers the
+ * newest AND the oldest days of the window (`--limit` takes only the newest).
+ * @template T
+ * @param {T[]} items
+ * @param {number} n
+ * @returns {T[]}
+ */
+export function spreadSample(items, n) {
+  if (n >= items.length) return items;
+  if (n === 1) return [items[0]];
+  const step = (items.length - 1) / (n - 1);
+  return Array.from({ length: n }, (_, i) => items[Math.round(i * step)]);
 }
 
 function newStats() {
@@ -75,6 +97,7 @@ function newStats() {
     pagesFetched: 0,
     discovered: 0,
     inWindow: 0,
+    processed: 0, // article pages fetched: inWindow, or fewer with --limit / --sample
     written: 0,
     errors: 0,
     fromCache: 0,
@@ -138,10 +161,11 @@ function countTrace(llm, trace) {
 
 /**
  * @param {object} entry one schema entry
- * @param {{ registry: object, window: { start: Date, end: Date }, limit?: number, cache: boolean,
- *           seen: Set<string>, s: object }} ctx  `s` is this publisher's stats object, updated in place
+ * @param {{ registry: object, window: { start: Date, end: Date }, limit?: number, sample?: number, cache: boolean,
+ *           seen: Set<string>, s: object, spend: { usd: number }, llmLimit: Function }} ctx
+ *   `s` is this publisher's stats object, updated in place; `llmLimit` is the run-wide LLM limiter
  */
-async function runPublisher(entry, { registry, window, limit, cache, seen, s, spend }) {
+async function runPublisher(entry, { registry, window, limit, sample, cache, seen, s, spend, llmLimit }) {
   const fetchList = pick(registry, 'fetchers', entry.fetcher.list);
   const extract = pick(registry, 'extractors', entry.extract);
   const label = pick(registry, 'labellers', entry.label);
@@ -154,7 +178,13 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s, sp
   const found = new Map();
   for (const source of toSources(entry)) {
     const discover = pick(registry, 'discoverers', source.discover);
-    const result = await discoverPages(source, entry, { fetchList, discover, window });
+    let result;
+    try {
+      result = await discoverPages(source, entry, { fetchList, discover, window });
+    } catch (err) {
+      // Page 1 of this source failed (e.g. blocked): the publisher's other sources still run.
+      result = { items: [], pages: 0, oldestDate: null, reachedStart: false, stop: 'page 1 failed', error: err.message };
+    }
     s.sources.push({
       url: source.url,
       discover: source.discover,
@@ -168,7 +198,7 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s, sp
     s.pagesFetched += result.pages;
     if (result.error) {
       s.errors++;
-      console.error(`[${entry.name}] paging stopped on an error: ${result.error}`);
+      console.error(`[${entry.name}] source ${source.url} stopped on an error: ${result.error}`);
     }
     for (const item of result.items) {
       const url = canonicalizeUrl(item.url, source.url);
@@ -186,7 +216,9 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s, sp
     .filter((item) => !item.publishedDate || isInWindow(item.publishedDate, window))
     .sort((a, b) => (b.publishedDate ?? '').localeCompare(a.publishedDate ?? ''));
   s.inWindow = todo.length;
-  if (limit) todo = todo.slice(0, limit);
+  if (sample) todo = spreadSample(todo, sample);
+  else if (limit) todo = todo.slice(0, limit);
+  s.processed = todo.length;
 
   // 3. Fetch → extract, one article at a time (D6: polite to the site).
   const articles = [];
@@ -201,7 +233,8 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s, sp
       // Temporary until Phase 4 (D21): keep the article from list data, with fullText null.
       // Extracting from an empty page makes every field fall back to the list item.
       s.errors++;
-      nullReason = BLOCKED_STATUSES.includes(err.status) ? 'blocked' : 'error';
+      // err.blocked: a block or challenge page, even one served with status 200 (D53).
+      nullReason = err.blocked || BLOCKED_STATUSES.includes(err.status) ? 'blocked' : 'error';
       console.error(`[${entry.name}] article failed (${nullReason}), writing list data only: ${err.message}`);
       article = extract('', item, entry, item.url);
     }
@@ -217,17 +250,21 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s, sp
     articles.push(article);
   }
 
-  // 4. Label: a few LLM calls in flight at once (the API, not the site, is the limit here).
+  // 4. Label through the run-wide limiter: parallel publishers share LLM_CONCURRENCY slots (D51).
   const ctx = { cache, spend };
-  const results = await mapLimit(articles, CONCURRENCY, async (article) => {
-    try {
-      return await label(article, entry, ctx);
-    } catch (err) {
-      // A bug in the labeller must not lose the article or stop the publisher: traced like an LLM error.
-      const trace = { url: article.url, llmError: { stage: 'labeller', kind: 'error', message: err.message }, calls: [] };
-      return { labels: ['others'], events: [], trace };
-    }
-  });
+  const results = await Promise.all(
+    articles.map((article) =>
+      llmLimit(async () => {
+        try {
+          return await label(article, entry, ctx);
+        } catch (err) {
+          // A bug in the labeller must not lose the article or stop the publisher: traced like an LLM error.
+          const trace = { url: article.url, llmError: { stage: 'labeller', kind: 'error', message: err.message }, calls: [] };
+          return { labels: ['others'], events: [], trace };
+        }
+      }),
+    ),
+  );
 
   const records = [];
   const traces = [];
@@ -246,7 +283,7 @@ async function runPublisher(entry, { registry, window, limit, cache, seen, s, sp
   const paging = s.sources.map((x) => `${x.discover} ${x.pagesFetched}p → ${x.pagingStop}`).join(', ');
   console.log(
     `[${entry.name}] ${paging} · oldest ${s.oldestDate} · discovered ${s.discovered} · in window ${s.inWindow}` +
-      ` · processed ${todo.length}${limit ? ' (--limit)' : ''} · written ${s.written} · errors ${s.errors}` +
+      ` · processed ${todo.length}${sample ? ' (--sample)' : limit ? ' (--limit)' : ''} · written ${s.written} · errors ${s.errors}` +
       `${cache ? ` · from cache ${s.fromCache}` : ''}` +
       `${s.fullTextNullUrls.length ? ` · fullText null ${JSON.stringify(s.fullTextNull)}` : ''}`,
   );

@@ -1,23 +1,27 @@
 /**
- * Runs `fn` over `items` with at most `limit` calls in flight, keeping the input order in the result.
- * Used for LLM calls: one at a time would take hours on a full run, unlimited would hit rate limits.
+ * A concurrency limiter: at most `max` tasks run at once, the rest wait in line (first come, first served).
+ * Used for LLM calls (D51): one limiter is shared by every publisher, so running publishers in parallel
+ * never multiplies the number of calls in flight (new API accounts have low rate limits).
  *
- * @template T, R
- * @param {T[]} items
- * @param {number} limit
- * @param {(item: T, index: number) => Promise<R>} fn
- * @returns {Promise<R[]>}
+ * @param {number} max
+ * @returns {<R>(task: () => Promise<R>) => Promise<R>} `limit(task)` runs `task` when a slot is free
+ *
+ * @example
+ * const limit = createLimiter(4);
+ * const results = await Promise.all(items.map((x) => limit(() => work(x)))); // ≤ 4 at once, order kept
  */
-export async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  // Each worker takes the next unclaimed index until none are left. JS is single-threaded, so `next++` is safe.
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i], i);
+export function createLimiter(max) {
+  let running = 0;
+  const waiting = []; // resolve functions of tasks waiting for a slot
+
+  return async function limit(task) {
+    if (running >= max) await new Promise((resolve) => waiting.push(resolve));
+    running++;
+    try {
+      return await task();
+    } finally {
+      running--;
+      waiting.shift()?.(); // hand the freed slot to the next task in line
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }

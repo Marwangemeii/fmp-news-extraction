@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runAll } from '../src/controller.js';
+import { runAll, spreadSample } from '../src/controller.js';
 import { extractHtml } from '../src/blocks/extract-html.js';
 
 const window = { start: new Date('2026-11-10T00:00:00Z'), end: new Date('2026-11-24T12:00:00Z') };
@@ -15,14 +15,19 @@ const PAGES = {
   'https://news.test/video': { body: '<article><div>video player only</div></article>' },
   'https://news.test/forbidden': { status: 403 },
   'https://news.test/broken': { status: 500 },
+  // A challenge page served with 200: the fetcher flags it (err.blocked), so it's `blocked`, not `noBody` (D53).
+  'https://news.test/challenge': { status: 200, blocked: true },
 };
 
 const registry = {
   fetchers: {
     fake: async (url) => {
       if (url === 'https://news.test/list') return { url, body: Object.keys(PAGES).join('\n') };
+      if (url === 'https://news.test/blocked-list') throw Object.assign(new Error('HTTP 403'), { status: 403, blocked: true });
       const page = PAGES[url];
-      if (page.status) throw Object.assign(new Error(`HTTP ${page.status} for ${url}`), { status: page.status });
+      if (page.status) {
+        throw Object.assign(new Error(`HTTP ${page.status} for ${url}`), { status: page.status, blocked: page.blocked });
+      }
       return { url, body: page.body };
     },
   },
@@ -39,23 +44,84 @@ const entry = {
   extract: 'html', label: 'none', defaultType: 'general', selectors: {},
 };
 
-test('null fullText reasons: noBody, blocked, error, counted and listed per URL', async () => {
+/** Runs `fn` with console output silenced (the controller logs every publisher). */
+async function quiet(fn) {
   const errorLog = console.error;
   const log = console.log;
-  console.error = console.log = () => {}; // keep the test output quiet
+  console.error = console.log = () => {};
   try {
-    const { records, stats } = await runAll([entry], { registry, window });
-    const s = stats.Fake;
-    assert.equal(records.length, 4); // nothing is dropped
-    assert.deepEqual(s.fullTextNull, { noBody: 1, blocked: 1, error: 1 });
-    assert.deepEqual(
-      Object.fromEntries(s.fullTextNullUrls.map((x) => [x.url, x.reason])),
-      { 'https://news.test/video': 'noBody', 'https://news.test/forbidden': 'blocked', 'https://news.test/broken': 'error' },
-    );
-    assert.equal(s.errors, 2); // fetch failures only; a page with no body is not an error
-    assert.equal(records.find((r) => r.url === 'https://news.test/ok').fullText, 'Real text.');
+    return await fn();
   } finally {
     console.error = errorLog;
     console.log = log;
   }
+}
+
+test('null fullText reasons: noBody, blocked (incl. a 200 challenge page), error, counted and listed per URL', async () => {
+  const { records, stats } = await quiet(() => runAll([entry], { registry, window }));
+  const s = stats.Fake;
+  assert.equal(records.length, 5); // nothing is dropped
+  assert.deepEqual(s.fullTextNull, { noBody: 1, blocked: 2, error: 1 });
+  assert.deepEqual(
+    Object.fromEntries(s.fullTextNullUrls.map((x) => [x.url, x.reason])),
+    {
+      'https://news.test/video': 'noBody',
+      'https://news.test/forbidden': 'blocked',
+      'https://news.test/broken': 'error',
+      'https://news.test/challenge': 'blocked',
+    },
+  );
+  assert.equal(s.errors, 3); // fetch failures only; a page with no body is not an error
+  assert.equal(records.find((r) => r.url === 'https://news.test/ok').fullText, 'Real text.');
+});
+
+test('a source whose page 1 fails is isolated: the other sources still run', async () => {
+  const two = { ...entry, startUrls: ['https://news.test/blocked-list', 'https://news.test/list'] };
+  const { records, stats } = await quiet(() => runAll([two], { registry, window }));
+  const s = stats.Fake;
+  assert.equal(s.failed, undefined);
+  assert.equal(records.length, 5);
+  assert.equal(s.sources[0].pagingStop, 'page 1 failed');
+  assert.match(s.sources[0].error, /403/);
+  assert.equal(s.sources[1].discovered, 5);
+});
+
+test('publishers run in parallel, output and stats stay in schema order', async () => {
+  // The first publisher is slow, so it finishes last.
+  const slowReg = {
+    ...registry,
+    fetchers: {
+      ...registry.fetchers,
+      slow: async (url) => {
+        await new Promise((r) => setTimeout(r, 30));
+        return registry.fetchers.fake(url);
+      },
+    },
+  };
+  const a = { ...entry, name: 'A', fetcher: { list: 'slow', article: 'slow' } };
+  const b = { ...entry, name: 'B', startUrls: ['https://news.test/list?b'], discover: 'linesB' };
+  slowReg.discoverers = { ...registry.discoverers, linesB: () => [{ url: 'https://news.test/ok?b=1', title: 'B', publishedDate: date }] };
+  slowReg.fetchers.fake = async (url) => {
+    if (url === 'https://news.test/list?b') return { url, body: '' };
+    if (url === 'https://news.test/ok?b=1') return { url, body: '<article><p>B text.</p></article>' };
+    return registry.fetchers.fake(url);
+  };
+  const { records, stats } = await quiet(() => runAll([a, b], { registry: slowReg, window }));
+  assert.deepEqual(Object.keys(stats), ['A', 'B']);
+  assert.equal(records.at(-1).publisher, 'B');
+  assert.ok(records.slice(0, -1).every((r) => r.publisher === 'A'));
+});
+
+test('--sample spreads over the list: first, last and evenly in between', () => {
+  const items = Array.from({ length: 11 }, (_, i) => i);
+  assert.deepEqual(spreadSample(items, 3), [0, 5, 10]);
+  assert.deepEqual(spreadSample(items, 1), [0]);
+  assert.deepEqual(spreadSample(items, 50), items);
+  assert.equal(new Set(spreadSample(items, 11)).size, 11);
+});
+
+test('--sample in a run: processed counts the sample, inWindow the full list', async () => {
+  const { stats } = await quiet(() => runAll([entry], { registry, window, sample: 2 }));
+  assert.equal(stats.Fake.inWindow, 5);
+  assert.equal(stats.Fake.processed, 2);
 });
