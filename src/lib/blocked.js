@@ -1,7 +1,7 @@
 /**
  * Detects a page that says "you're blocked" or "prove you're human" instead of the content,
  * even when its HTTP status is 200 or 202 (D31 limit, closed in Phase 4, D53).
- * Generic: it knows bot-protection vendors (Cloudflare, AWS WAF, Akamai), never a publisher.
+ * Generic: it knows bot-protection vendors (Cloudflare, AWS WAF, Akamai, Imperva), never a publisher.
  */
 
 /** Statuses that mean the site refused us. */
@@ -18,6 +18,7 @@ const BLOCK_TITLES = [
   /^just a moment/i, // Cloudflare JS challenge
   /^attention required/i, // Cloudflare block ("Sorry, you have been blocked")
   /^access denied/i, // Akamai
+  /^pardon our interruption/i, // Imperva (Distil) bot challenge, served with 200 (D65)
   /captcha/i,
   /verify (that )?you are (a )?human|are you a robot|human verification/i,
 ];

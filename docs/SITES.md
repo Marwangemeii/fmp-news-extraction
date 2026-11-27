@@ -149,8 +149,23 @@ Template for each site:
 | 2026-11-27 | first browser page of a session | `page.content()` read during the challenge reload gave an empty body | fetcher fixed: empty = not ready (D55) |
 
 ## 8. Zacks
-- **Start URLs:** /articles/index.php, /stock/news
-- **Notes:** may be bot-protected. **(hypothesis)**
+- **Start URLs:** `/articles/index.php`, `/stock/news` (given).
+- **Protection:** Imperva (the "Pardon Our Interruption" JavaScript challenge, `reese84`), served with **200** on every page, robots.txt excepted. `blockReason()` now recognizes the title (D65). In the browser the challenge clears on the session's first page (~50 s), then pages load in 2–5 s.
+- **Discovery found (2026-11-27):**
+  - `/articles/index.php` (browser): "Most Recent Articles", **10 items** (`.listitem`, link `h1 a`, date `time` "Published on November 27,2026"). Its paging links (`?page=2…4`) and the infinite-scroll endpoint `?page=N&type=json` return **no items** for every page after 1 (checked 2, 5, 10, 50, 60).
+  - `/stock/news` (browser): **403** every time (also after the challenge cleared for the session).
+  - robots.txt sitemaps: `news_all_articles_sitemap.xml` (Google News, **500 URLs = ~1.5 days**, `news:publication_date` **date only**, "2026-11-27"), `all_articles_sitemap.xml` (the same 500, `lastmod` date only, `image:loc`), `all_articles_pf_sitemap.xml` (380 personal-finance URLs back to 2024). `?page=2` is ignored; `/sitemap.xml`, `/sitemap_index.xml`, `/rss/` 404; `/rss/rss_news.php` = the challenge; `/sitemap.php` is an HTML site map.
+- **Publish time:** **none anywhere.** Article page: JSON-LD `"datePublished": "2026-11-27"`, `<time datetime="00:00">November 27, 2026`; `meta name="date"` / `last-modified` = the time the page was generated (= now), not the publish time. R-A1 asks for the real publish time: **decision pending (Marwan).**
+- **Selectors (verified on 1 article):** body `#comtext` (`.commentary_body`); og:title, og:image, canonical clean. Clean-up candidates: `button` ("Quick Quote"), `.third_para_ad_commentary`, `.inline_top_ad_commentary`, `.inline_bottom_ad_commentary`, `.cta_section`. "Key Takeaways" (`.key-points`) is article text.
+- **robots.txt:** `User-agent: *` disallows `/search/`, `/pr/`, `/article/stock/news/`, PDFs, registration; article paths `/stock/news/<id>/`, `/commentary/<id>/` allowed. `GPTBot` disallowed entirely (we're not GPTBot; noted).
+- **Blocking log:**
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-27 | `/articles/index.php`, `/stock/news`, sitemaps, `/rss/` with Node fetch (Chrome UA), also full Chrome headers | **200**, 5,996 bytes, `<title>Pardon Our Interruption`, Imperva `reese84` script; robots.txt 200 | plain HTTP can't pass a JS challenge |
+| 2026-11-27 | headless Chromium (browser fetcher) | first page of a session: challenge clears (~50 s); then sitemaps, `/articles/index.php`, articles **200**; `/stock/news` 403 | **works** (D13 step 3) |
+| 2026-11-27 | `/articles/index.php?page=N` and `?page=N&type=json` (N = 2, 5, 10, 50, 60) | 200, no items | the list holds 10 articles |
+| 2026-11-27 | sitemaps from robots.txt; `?page=2`; `/sitemap.xml`, `/sitemap_index.xml`, `/sitemap.php`, `/rss/` | 500 URLs (~1.5 days, date only); same; 404; HTML; 404 | no route back 14 days found |
 
 ## 9. Business Wire
 - **Start URLs:** `https://www.businesswire.com/newsroom` (given, blocked: `page 1 failed` each run), plus the added daily Google News sitemaps `https://www.businesswire.com/sitemap/google-news/{YYYY-MM-DD}.xml.gz` (D64).

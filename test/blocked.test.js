@@ -57,3 +57,8 @@ test('createLimiter: a failing task frees its slot', async () => {
   await assert.rejects(limit(async () => { throw new Error('boom'); }));
   assert.equal(await limit(async () => 'next'), 'next');
 });
+
+test('Imperva "Pardon Our Interruption" challenge (200) is a block page', () => {
+  const page = '<html><head><noscript><title>Pardon Our Interruption</title></noscript></head><body></body></html>';
+  assert.match(blockReason({ status: 200, headers: { get: () => null }, body: page }), /Pardon Our Interruption/);
+});

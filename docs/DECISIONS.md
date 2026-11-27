@@ -412,6 +412,10 @@ Ladder (all logged in SITES.md): plain HTTP → 403 (Cloudflare "Sorry, you have
 - **Production:** FMP's proxy network (`PROXY_URL`, D63) or Business Wire's licensed feed; the schema switch is the article fetcher plus body selectors (not verifiable now: no page loads).
 **Why:** R-D3 coverage with real publish dates, R-J2 effort, rule 7. **Considered:** the MRSS/RSS category feeds (truncated, one category, ~1 week); `/newsroom` paging (blocked); hiding automation (rejected, D62).
 
+### D65. Imperva's "Pardon Our Interruption" is a block page; Zacks (decision pending)
+`blockReason()` (D53) now also matches the `<title>` "Pardon Our Interruption", Imperva's (formerly Distil's) JavaScript challenge. Zacks serves it with **200** on every page except robots.txt, so without this it would have been read as an article with no body (or a list with no items). In the browser it clears on the session's first page (~50 s), then pages load.
+**Zacks: pending Marwan's decision.** Two findings block a normal entry (details in SITES.md §8): (1) no route lists more than ~1.5 days: the news sitemap is capped at 500 URLs, "Most Recent Articles" has 10 items, and its paging returns nothing past page 1; (2) **no publish time anywhere**: page, JSON-LD and sitemap give only the day ("2026-11-27"); R-A1 asks for the real publish time.
+
 ---
 
 ## Open questions (decide in the phase noted)
