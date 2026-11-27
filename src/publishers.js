@@ -86,7 +86,33 @@ const ENTRIES = [
   {
     name: 'Fox Business',
     site: 'foxbusiness.com',
-    startUrls: ['https://www.foxbusiness.com/markets', 'https://www.foxbusiness.com/category/stocks'],
+    enabled: true,
+    startUrls: [
+      // The given pages (R-D2): ~20–40 cards each, relative times ("3 hours ago"), so no list date.
+      // Video cards are left out: they link to /video/<id>, a player with no article text.
+      { url: 'https://www.foxbusiness.com/markets', discover: 'html-list', paging: null },
+      { url: 'https://www.foxbusiness.com/category/stocks', discover: 'html-list', paging: null },
+      // Added routes (D66), from robots.txt: the Google News sitemap (~15 newest, publish dates) and the
+      // articles sitemap (5,000 newest by lastmod, ~15 months; lastmod only pre-filters, D58). The articles
+      // sitemap is refreshed a few times a day; the news sitemap covers the hours since.
+      { url: 'https://www.foxbusiness.com/sitemap.xml?type=news', discover: 'sitemap', paging: null },
+      { url: 'https://www.foxbusiness.com/sitemap.xml?type=articles', discover: 'sitemap', paging: null },
+    ],
+    list: { item: 'article', link: 'h3 a:not([href*="/video/"]), h2 a:not([href*="/video/"])' },
+    selectors: {
+      title: 'h1', // og:title is sometimes a different (social) headline
+      body: '.article-body',
+      // The visible "Published" time; dcterms.created is the draft's creation time.
+      publishedDate: { jsonld: 'datePublished' }, // "2026-11-25T23:29:55-05:00"
+      remove: [
+        '.featured', // the lead video or image block, with its caption
+        '.image-ct', // inline images and their captions
+        '.ad-container',
+        '.embed-media', // embedded posts (empty without JavaScript)
+        'table.stock-fundamentals', // live quote widget: "Ticker | Security | Last | Change"
+        'p:has(> a > strong)', // ALL-CAPS links to other articles, "GET FOX BUSINESS ON THE GO BY CLICKING HERE"
+      ],
+    },
   },
   {
     name: 'Investing.com',

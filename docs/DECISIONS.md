@@ -416,6 +416,12 @@ Ladder (all logged in SITES.md): plain HTTP → 403 (Cloudflare "Sorry, you have
 `blockReason()` (D53) now also matches the `<title>` "Pardon Our Interruption", Imperva's (formerly Distil's) JavaScript challenge. Zacks serves it with **200** on every page except robots.txt, so without this it would have been read as an article with no body (or a list with no items). In the browser it clears on the session's first page (~50 s), then pages load.
 **Zacks: pending Marwan's decision.** Two findings block a normal entry (details in SITES.md §8): (1) no route lists more than ~1.5 days: the news sitemap is capped at 500 URLs, "Most Recent Articles" has 10 items, and its paging returns nothing past page 1; (2) **no publish time anywhere**: page, JSON-LD and sitemap give only the day ("2026-11-27"); R-A1 asks for the real publish time.
 
+### D66. Fox Business: two sitemaps + the given pages; publish date from JSON-LD
+- **Sources:** the given `/markets` and `/category/stocks` (`html-list`, one page each, `article` cards; video cards left out with `h3 a:not([href*="/video/"])`; cards show "3 hours ago", so no list date), plus, from robots.txt, `sitemap.xml?type=news` (Google News, ~15 newest, publish dates) and `sitemap.xml?type=articles` (5,000 URLs sorted by `lastmod`, ~15 months, one request). The articles sitemap is refreshed a few times a day (newest lastmod 07:58Z at an 18:30Z run); the news sitemap covers the hours since. Every article card on both given pages was in one of the two sitemaps.
+- **Publish date:** a new selector form, `{ jsonld: 'datePublished' }` (`extract-html.js`): the first value of that key in the page's JSON-LD (arrays and `@graph` searched, broken blocks skipped). On 3 articles it equals the visible "Published" time and the news sitemap's `publication_date`; `dcterms.created` is earlier (the draft's creation) and `article:published_time` is absent. Generic: any site with JSON-LD can use it.
+- **HTTP** for everything; no blocking seen.
+**Why:** R-D3 coverage with page dates. **Considered:** the site's "load more" API (no request fired on scroll; `/api/article-search` 404); the `<time>` text ("November 25, 2026 11:29pm EST", a format `parseListDate` doesn't read); `dcterms.created` (not the publish time).
+
 ---
 
 ## Open questions (decide in the phase noted)

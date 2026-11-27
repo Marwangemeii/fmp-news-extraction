@@ -58,8 +58,23 @@ Template for each site:
 | 2026-11-27 | ~210 list pages + 100 articles in 8 min, 1 request at a time | all 200 | no blocking seen |
 
 ## 3. Fox Business
-- **Start URLs:** /markets, /category/stocks
-- **Notes:** the list may be loaded by JavaScript or a "Show more" button; check the network tab for a JSON endpoint. **(hypothesis)**
+- **Start URLs:** `/markets`, `/category/stocks` (given), plus `sitemap.xml?type=news` and `sitemap.xml?type=articles` (from robots.txt, D66).
+- **Discovery route:**
+  - Given pages (HTTP, `html-list`): `article` cards, link `h3 a`/`h2 a` (video cards excluded), relative times only ("1 day ago"). `/markets` ~36 links, `/category/stocks` 20, back ~6 days; no "load more" request fires on scroll.
+  - `sitemap.xml?type=news`: ~15 URLs (~2 days), `news:publication_date` ("2026-11-27T10:06:33-05:00"), `news:title`.
+  - `sitemap.xml?type=articles`: 5,000 URLs sorted by `lastmod` (newest 2026-11-27T07:58Z, oldest 2025-08-26), with `image:loc`; `&page=2` continues into 2024–25. The index (`sitemap.xml`) also lists `videos`, `liveblogs`, `categories`, `fastchanging` (~17 hub pages).
+- **Covering 14 days (2026-11-27, window from 2026-11-13T00:00Z):** articles sitemap `window start reached` in one request. **131 in window** (129 by lastmod + 2 only in the news sitemap); 1 dropped by its page date. ~9 articles a day (Thanksgiving week). By section (lastmod): economy 23, politics 17, markets 16, technology 15, lifestyle 14, fox-news-tech 11, retail 5, business-leaders 5…
+- **Fetcher:** HTTP for all (200, Chrome UA). robots.txt disallows only `/search`, `/topics/`, `/xid`, `/fox-money/a/*`.
+- **Selectors:** title `h1` (og:title is sometimes a different social headline); body `.article-body`; publishedDate `{ jsonld: 'datePublished' }` (= the visible "Published" time and the news sitemap date; `dcterms.created` is the draft time); og:image; canonical.
+- **Clean-up:** `.featured` (lead video/image + caption), `.image-ct` (inline images + captions), `.ad-container`, `.embed-media` (empty without JS), `table.stock-fundamentals` (live quote widget), `p:has(> a > strong)` (ALL-CAPS links to other articles, "GET FOX BUSINESS ON THE GO BY CLICKING HERE", "CLICK HERE TO DOWNLOAD THE FOX NEWS APP"). Checked on the 100-sample: all 99 changed; the removed paragraphs are promos, related-article links, quote rows, image credits and video blurbs; 0 ALL-CAPS paragraphs left.
+- **Spot-check (sample of 100 over the window):** 99 written, 0 fullText null, 2,190–17,268 chars (median 3,771), Nov 13–27. Newest (Nov 27 07:58Z, Trump/Nvidia CEO) and oldest (Nov 13 00:53Z) start at the lead and end at the last line ("FOX Business' Bradford Betz contributed to this report.").
+- **Labelled `--limit 10`:** pre-filter 5/10, all `others`, 0 errors, $0.0015.
+- **Blocking log:** none, no blocking seen.
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-27 | given pages, robots.txt, sitemaps, articles over Node fetch | all 200 | used |
+| 2026-11-27 | `/api/article-search?…` (the Fox "load more" API seen on other Fox sites) | 404 | not used |
 
 ## 4. Investing.com
 - **Start URLs:** /news/, /rss/news_25.rss

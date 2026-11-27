@@ -38,3 +38,16 @@ test('text: feed description → page meta description → first paragraph → "
   assert.equal(text(page('', '<p>First paragraph.</p><p>Second.</p>')), 'First paragraph.');
   assert.equal(text(page('', '<div>video player only</div>')), ''); // nothing stated → empty, never invented
 });
+
+test('publishedDate from JSON-LD (D66): first block with the key, inside @graph, broken blocks skipped', () => {
+  const page = `<html><head>
+    <script type="application/ld+json">{ not json </script>
+    <script type="application/ld+json">{"@type":"Organization","name":"X"}</script>
+    <script type="application/ld+json">{"@graph":[{"@type":"NewsArticle","datePublished":"2026-11-25T23:29:55-05:00"}]}</script>
+    </head><body><article><p>Body.</p></article></body></html>`;
+  const e = { selectors: { publishedDate: { jsonld: 'datePublished' } } };
+  assert.equal(extractHtml(page, item, e, item.url).publishedDate, '2026-11-26T04:29:55.000Z');
+  // No JSON-LD: falls back to the list date, as with any selector.
+  const none = extractHtml('<html><body><article><p>x</p></article></body></html>', { ...item, publishedDate: '2026-11-20T00:00:00.000Z' }, e, item.url);
+  assert.equal(none.publishedDate, '2026-11-20T00:00:00.000Z');
+});

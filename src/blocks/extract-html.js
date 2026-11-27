@@ -3,7 +3,8 @@ import { canonicalizeUrl } from '../lib/url.js';
 
 /**
  * Standard tags most news sites have. A schema entry's `selectors` override any of these (D19).
- * A selector is either a CSS string (use the element's text) or { css, attr } (use an attribute).
+ * A selector is either a CSS string (use the element's text), { css, attr } (use an attribute), or
+ * { jsonld: 'datePublished' } (a key of the page's JSON-LD metadata, D66).
  */
 const DEFAULT_SELECTORS = {
   canonical: { css: 'link[rel="canonical"]', attr: 'href' },
@@ -50,11 +51,34 @@ export function extractHtml(html, item, entry, finalUrl) {
 /** First match of a selector: its attribute if `attr` is set, else its text. */
 function pick($, selector) {
   if (!selector) return null;
+  if (selector.jsonld) return jsonLd($, selector.jsonld);
   const { css, attr } = typeof selector === 'string' ? { css: selector } : selector;
   const el = $(css).first();
   if (!el.length) return null;
   const value = attr ? el.attr(attr) : el.text();
   return value?.trim() || null;
+}
+
+/**
+ * The first value of `key` in the page's JSON-LD blocks (`<script type="application/ld+json">`), looking
+ * inside arrays and `@graph`. A block that isn't valid JSON is skipped.
+ */
+function jsonLd($, key) {
+  const visit = (node) => {
+    if (!node || typeof node !== 'object') return null;
+    if (Array.isArray(node)) return node.map(visit).find((v) => v != null) ?? null;
+    if (typeof node[key] === 'string' && node[key].trim()) return node[key].trim();
+    return visit(node['@graph']);
+  };
+  for (const el of $('script[type="application/ld+json"]').toArray()) {
+    try {
+      const value = visit(JSON.parse($(el).text()));
+      if (value) return value;
+    } catch {
+      // not valid JSON: try the next block
+    }
+  }
+  return null;
 }
 
 /** Body → plain text, one block per paragraph, separated by a blank line (R-A8). */
