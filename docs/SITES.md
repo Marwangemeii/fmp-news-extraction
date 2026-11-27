@@ -77,8 +77,25 @@ Template for each site:
 | 2026-11-27 | `/api/article-search?…` (the Fox "load more" API seen on other Fox sites) | 404 | not used |
 
 ## 4. Investing.com
-- **Start URLs:** /news/, /rss/news_25.rss
-- **Notes:** may be bot-protected. **(hypothesis)**
+- **Start URLs:** `/news/`, `/rss/news_25.rss` (given), plus 13 other news feeds from `/webmaster-tools/rss` (D67).
+- **Discovery route:**
+  - Feeds (HTTP, `rss`, `list.dateZone: 'UTC'`): `news` (All News), `news_1` (Forex), `_11` (Commodities), `_14` (Economy), `_95` (Economic Indicators), `_285` (Most Popular), `_301` (Crypto), `_356` (Company), `_357` (Insider Trading), `_1061` (Analyst Ratings), `_1062` (Earnings), `_1063` (Earnings Call Transcripts), `_1064` (SEC Filings), `_1065` (Investment Ideas), `_25` (Stock Market). 10 items each, `<enclosure>` image, `pubDate` "2026-11-27 18:21:02" (UTC, checked), **no description**. Skipped: `_355` Press Releases (robots.txt `Disallow: /news/press-releases`), `_350` Personal Finance (2023–24 items).
+  - `/news/` (browser, `html-list`): 10 cards `article[data-test="article-item"]`, link `a[data-test="article-title-link"]` (minus `/news/pro/`, disallowed), `<time datetime="2026-11-27 18:28:24">` with text "11 minutes ago".
+  - robots.txt (read in the browser) lists `sitemap_index.xml` → `news_sitemap.xml`, `news_company_sitemap.xml`, `news_insider_trading_sitemap.xml`, `news_analyst_ratings_sitemap.xml`, `news_stock_market_sitemap.xml`: all 403 over HTTP.
+- **Covering 14 days (2026-11-27):** **not covered.** 16 requests: 138 articles, oldest 2026-11-23T11:02Z (most feeds reach back only hours; Forex/Crypto/Earnings ~2 days). `windowStartReached: false`.
+- **What gets written:** each feed article: url, title, publishedDate (feed, UTC), image (enclosure), `text: ""`, `fullText: null` (`blocked`), `others`, no LLM call. Type: `/news/forex-news/` → forex, `/news/cryptocurrency-news/` → crypto (D68). Sample 100: 100 written (in the first run: general 78, crypto 10, forex 7), 95 not requested after 5 blocks. Validate PASS (warnings: R-A7/R-A9 per record, R-D3). Labelled `--limit 10`: 0 LLM calls, $0.
+- **Selectors:** none verified (no article page loads).
+- **Production approach:** FMP's proxy network (`PROXY_URL`, D63) or Investing.com's licensed data.
+- **Blocking log:**
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-27 | robots.txt, `/news/`, sitemaps (`sitemap.xml`, `sitemap_index.xml`, `news_sitemap.xml`), articles; Node fetch, Chrome UA, also full Chrome headers | **403**, body "403" (3 bytes), `server: cloudflare`, `cf-ray` | blocked for plain HTTP |
+| 2026-11-27 | `/rss/news_25.rss` and the other `/rss/*.rss`, `/webmaster-tools/rss` | 200 | **used** (D67) |
+| 2026-11-27 | headless Chromium (normal Chrome UA): `/news/`, then an article, robots.txt | `/news/` 200 (first page of the session); then **403** "Just a moment..." (`cf-mitigated: challenge`) | the Benzinga pattern (D62) |
+| 2026-11-27 | same, 20 s between pages | 200, then 403 challenge, 403 challenge; `navigator.webdriver = true`; `cf_clearance` set after page 1 | slower pacing doesn't help (D13 step 4) |
+| 2026-11-27 | robots.txt / `sitemap_index.xml` as the first page of a new browser (probing only) | 200: sitemap list found | not used: reading each sitemap as a fresh session = the rejected fresh-session trick (D62) |
+| 2026-11-27 | run: articles over HTTP + breaker | 5 × 403, rest not requested | written from feed data |
 
 ## 5. Benzinga
 - **Start URLs:** `/sitemap-benzinga.com/www/googlenews.xml` and `/news` (given), plus the added `/sitemap-benzinga.com/www/latest.xml` (from robots.txt).

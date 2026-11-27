@@ -67,3 +67,14 @@ test('resolveSymbols: no exchange from the classifier → the exchange the regex
   const r = resolveSymbols(article, { symbol: { ticker: 'IS', exchange: null, evidence: 'Infrastructure Dividend Split Corp. (TSX:IS) announced a distribution.' }, relatedSymbols: [] });
   assert.equal(r.symbol, 'IS.TO');
 });
+
+test('typeOf (D68): schema typeByUrl first, then defaultType, then general + symbol → stock', async () => {
+  const { typeOf } = await import('../src/lib/type.js');
+  const e = { defaultType: 'general', typeByUrl: [{ contains: '/news/forex-news/', type: 'forex' }, { contains: '/news/cryptocurrency-news/', type: 'crypto' }] };
+  assert.equal(typeOf(e, 'EURUSD', 'https://x.test/news/forex-news/eur-falls-1').value, 'forex');
+  assert.equal(typeOf(e, null, 'https://x.test/news/cryptocurrency-news/btc-2').value, 'crypto');
+  assert.equal(typeOf(e, 'AAPL', 'https://x.test/news/stock-market-news/apple-3').value, 'stock');
+  assert.equal(typeOf(e, null, 'https://x.test/news/economy/fed-4').value, 'general');
+  assert.match(typeOf(e, null, 'https://x.test/news/forex-news/x').rule, /typeByUrl/);
+  assert.equal(typeOf({ defaultType: 'pressReleases' }, 'AAPL').value, 'pressReleases'); // no rules, no URL
+});

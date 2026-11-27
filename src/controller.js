@@ -7,6 +7,7 @@
  */
 import { canonicalizeUrl } from './lib/url.js';
 import { isInWindow } from './lib/window.js';
+import { typeOf } from './lib/type.js';
 import { toSources, discoverPages, listDateOf } from './lib/paging.js';
 import { cached } from './lib/cache.js';
 import { createLimiter } from './lib/pool.js';
@@ -216,7 +217,14 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
     }
     for (const item of result.items) {
       const url = canonicalizeUrl(item.url, source.url);
-      if (!found.has(url)) found.set(url, { ...item, url });
+      const prev = found.get(url);
+      if (!prev) {
+        found.set(url, { ...item, url });
+        continue;
+      }
+      // Listed by an earlier source too: keep its values, fill only what it lacked (e.g. an HTML list card
+      // with no date, then the same article in a feed with its publish date).
+      for (const [k, v] of Object.entries(item)) if (prev[k] == null && v != null) prev[k] = v;
     }
   }
   const dates = s.sources.map((x) => x.oldestDate).filter(Boolean).sort();
@@ -344,7 +352,7 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
 }
 
 /** Output record, fields in REQUIREMENTS §3 order (+ relatedSymbols after symbol, R-J5). */
-function toRecord(entry, article, { labels, events, symbol = null, relatedSymbols = [], type = entry.defaultType }) {
+function toRecord(entry, article, { labels, events, symbol = null, relatedSymbols = [], type = typeOf(entry, null, article.url).value }) {
   return {
     publishedDate: article.publishedDate,
     publisher: entry.name,

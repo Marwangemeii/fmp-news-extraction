@@ -117,7 +117,38 @@ const ENTRIES = [
   {
     name: 'Investing.com',
     site: 'investing.com',
-    startUrls: ['https://www.investing.com/news/', 'https://www.investing.com/rss/news_25.rss'],
+    enabled: true,
+    // Cloudflare answers plain HTTP with 403 on every www page except /rss/*, and the browser after the
+    // first page of a session ("Just a moment...", D67). We stop at the legitimate ladder (D62): articles
+    // are written from the RSS feeds with fullText null, reason `blocked`; the breaker (D61) stops after 5.
+    delayMs: 2000,
+    // Sections that are an asset class (D68). Everything else: general, or stock with a proven symbol.
+    typeByUrl: [
+      { contains: '/news/forex-news/', type: 'forex' },
+      { contains: '/news/cryptocurrency-news/', type: 'crypto' },
+    ],
+    startUrls: [
+      // The given /news/ page (R-D2), through the browser (plain HTTP gets 403): 10 cards, "11 minutes ago"
+      // (no list date). /news/pro/ links are skipped: robots.txt disallows them.
+      {
+        url: 'https://www.investing.com/news/',
+        fetcher: 'browser',
+        discover: 'html-list',
+        paging: null,
+        list: { item: 'article[data-test="article-item"]', link: 'a[data-test="article-title-link"]:not([href*="/news/pro/"])' },
+      },
+      // The given feed and, added (D67), the site's other news feeds (/webmaster-tools/rss), 10 items each.
+      // Their pubDate has no zone ("2026-11-27 18:21:02"); it is UTC (checked against the page's
+      // "2026-11-27T17:59:10Z" for the same article). Left out: press releases (robots.txt disallows
+      // /news/press-releases) and personal finance (last item 2024).
+      ...['news_25', 'news', 'news_1', 'news_11', 'news_14', 'news_95', 'news_285', 'news_301', 'news_356', 'news_357',
+        'news_1061', 'news_1062', 'news_1063', 'news_1064', 'news_1065'].map((feed) => ({
+        url: `https://www.investing.com/rss/${feed}.rss`,
+        discover: 'rss',
+        paging: null,
+        list: { dateZone: 'UTC' },
+      })),
+    ],
   },
   {
     name: 'Benzinga',

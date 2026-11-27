@@ -51,13 +51,13 @@ export async function labelLlm(article, entry, ctx = {}) {
   };
   // A press release is the company's own announcement: K11 (opening rule) doesn't apply to it (D44).
   const pressRelease = entry.defaultType === 'pressReleases';
-  let base = { symbol: null, relatedSymbols: [], type: entry.defaultType };
+  let base = { symbol: null, relatedSymbols: [], type: typeOf(entry, null, article.url).value };
   let usListing = false;
   /** Symbol (K7, D46) + type (D47), from the classifier's answer or, with none, from the regex alone. */
   const setSymbols = (proposed) => {
     const s = resolveSymbols(article, proposed);
     trace.symbol = s.trace;
-    trace.type = typeOf(entry, s.symbol);
+    trace.type = typeOf(entry, s.symbol, article.url);
     base = { symbol: s.symbol, relatedSymbols: s.relatedSymbols, type: trace.type.value };
     usListing = isUsExchange(s.exchange);
   };

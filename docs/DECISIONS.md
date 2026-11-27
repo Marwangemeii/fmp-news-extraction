@@ -292,7 +292,7 @@ For an article whose type is **not** `pressReleases`, a label survives only if i
 ### D47. The `type` rule
 `src/lib/type.js`, `typeOf(entry, symbol)`: the publisher's `defaultType` decides (`pressReleases` for the wires GlobeNewswire, Business Wire and Newsfile, `crypto` for CryptoPotato), except that on a `general` publisher an article with a **proven main symbol** is `stock`.
 **Why:** R-A11; the gold set (a TechCrunch IPO story with ticker ANT is `stock`, a CEO story with no ticker is `general`). The rule is deterministic and traced (`trace.type.rule`).
-**Not yet:** forex. Investing.com's forex stories will need a URL-based override in its schema entry (Phase 4), added only when that entry is built.
+**Forex:** done in D68 (`typeByUrl`, Investing.com).
 
 ### D48. Earnings `time` / `timeExact` in practice (D11)
 `src/lib/time.js` + `earningsTime()` in the labeller, in this order:
@@ -422,9 +422,21 @@ Ladder (all logged in SITES.md): plain HTTP → 403 (Cloudflare "Sorry, you have
 - **HTTP** for everything; no blocking seen.
 **Why:** R-D3 coverage with page dates. **Considered:** the site's "load more" API (no request fired on scroll; `/api/article-search` 404); the `<time>` text ("November 25, 2026 11:29pm EST", a format `parseListDate` doesn't read); `dcterms.created` (not the publish time).
 
+### D67. Investing.com: blocked; written from its RSS feeds; feed dates with no zone; merging sources
+- **Blocked:** Cloudflare answers plain HTTP with 403 on every `www` page except `/rss/*` (robots.txt, sitemaps, `/news/`, articles; also with full browser headers). In headless Chromium the **first page of a session loads**, then every page is a 403 "Just a moment..." challenge (`cf-mitigated: challenge`) that doesn't clear, also at 20 s pacing: the Benzinga pattern. We stop at the legitimate ladder (D62): the news sitemaps (`news_sitemap.xml` and 4 more, listed in `sitemap_index.xml`) could only be read as a fresh session's first page each time, which is the rejected trick.
+- **Route:** the given `/news/` (browser, 10 cards, no dates; `/news/pro/` links skipped, robots.txt disallows them) and the given `/rss/news_25.rss`, plus the site's 13 other news feeds from `/webmaster-tools/rss` (10 items each, HTTP). Not used: press releases (robots.txt disallows `/news/press-releases`) and personal finance (stale since 2024). Together ~140 articles reaching back hours to ~4 days: **the window is not covered** (`windowStartReached: false`). Written with `fullText: null` (`blocked`), title, publish date, the feed's `<enclosure>` image; no LLM call (D41).
+- **Feed dates with no zone:** Investing's `pubDate` is "2026-11-27 18:21:02". The RSS discoverer used `new Date()` on it, which reads a zone-less date **in the machine's own time zone** (here UTC+2: 16:21Z, silently wrong, and different on another machine). Now a `pubDate` with no written zone is null (D54's rule), unless the source declares `list: { dateZone: 'UTC' }`. For Investing that is checked: `/news/` embeds "2026-11-27T17:59:10Z" for the article whose feed date is "2026-11-27 17:59:10", and the "Wall Street ends higher" items are dated after the 18:00Z close. Existing feeds (TechCrunch, CryptoPotato, Newsfile) all carry offsets: 0 null dates after the change.
+- **Merging sources:** when two sources list the same URL, the later one now fills fields the earlier one lacked (never overwrites). Before, the first source's item won whole: an Investing `/news/` card (no date) hid the same article's feed date, so it was counted as "no publish date" instead of written.
+- **Production:** FMP's proxy network (`PROXY_URL`, D63) or Investing.com's licensed data feed.
+**Why:** R-J2, rule 4 (no guessed dates), rule 7. **Considered:** reading sitemaps as a fresh browser session each (rejected, D62); assuming UTC for every zone-less feed (a guess where unchecked).
+
+### D68. `typeByUrl`: a schema rule for sites with a section per asset class (closes D47's "forex: not yet")
+`typeOf(entry, symbol, url)`: an entry's `typeByUrl: [{ contains, type }]` is checked first (first match wins, traced as the rule), then `defaultType`, then general + proven symbol → `stock`. The controller's records written without a labeller use it too, so `LABEL=placeholder` runs and blocked articles get the same type. Investing.com: `/news/forex-news/` → `forex`, `/news/cryptocurrency-news/` → `crypto` (sample: 7 forex, 10 crypto, 83 general).
+**Why:** R-A11; a URL section is a deterministic, checkable signal. **Considered:** asking the LLM for the type (non-deterministic, and blocked articles have no text).
+
 ---
 
 ## Open questions (decide in the phase noted)
 - ~~**Phase 3:** which Claude model(s); prompt structure.~~ Decided: D34, D35.
 - ~~**Phase 3:** `symbol` and `type` for articles that skip the LLM.~~ Decided: D46 (regex in the opening), D47.
-- ~~**Phase 3:** the `type` rule.~~ Decided: D47. Forex override: Phase 4, with the Investing.com entry.
+- ~~**Phase 3:** the `type` rule.~~ Decided: D47. Forex override: D68.

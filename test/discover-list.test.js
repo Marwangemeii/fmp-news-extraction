@@ -99,3 +99,23 @@ test('html-list: a page with the schema\'s blockedText throws `blocked` instead 
   const page = '<p>Our public search function is currently experiencing unusually high demand. Please try again in a few minutes.</p>';
   assert.throws(() => discoverHtmlList(page, 'https://x.test/search', { list }), (err) => err.blocked === true);
 });
+
+test('rss: a pubDate with no zone is null unless the schema says the feed is UTC (D67); enclosure image', async () => {
+  const { discoverRss } = await import('../src/blocks/discover-rss.js');
+  const feed = `<?xml version="1.0"?><rss version="2.0"><channel>
+    <item><title>A</title><pubDate>2026-11-27 18:21:02</pubDate><link>https://n.test/a</link>
+      <enclosure url="https://img.test/a.jpg" length="1" type="image/jpeg"/></item>
+    <item><title>B</title><pubDate>Fri, 27 Nov 2026 13:30:00 -0500</pubDate><link>https://n.test/b</link>
+      <enclosure url="https://n.test/b.mp3" length="1" type="audio/mpeg"/></item>
+    <item><title>C</title><pubDate>Fri, 27 Nov 2026 13:30:00 UT</pubDate><link>https://n.test/c</link></item>
+  </channel></rss>`;
+  const plain = discoverRss(feed, 'https://n.test/feed');
+  assert.equal(plain[0].publishedDate, null); // never read in the machine's own time zone
+  assert.equal(plain[1].publishedDate, '2026-11-27T18:30:00.000Z');
+  assert.equal(plain[2].publishedDate, '2026-11-27T13:30:00.000Z');
+  assert.equal(plain[0].image, 'https://img.test/a.jpg');
+  assert.equal(plain[1].image, undefined); // not an image
+  const utc = discoverRss(feed, 'https://n.test/feed', { list: { dateZone: 'UTC' } });
+  assert.equal(utc[0].publishedDate, '2026-11-27T18:21:02.000Z');
+  assert.equal(utc[1].publishedDate, '2026-11-27T18:30:00.000Z'); // a written offset still wins
+});

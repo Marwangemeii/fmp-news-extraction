@@ -223,3 +223,27 @@ test('circuit breaker (D61): after 5 blocked articles in a row, the rest are wri
   assert.equal(records.length, 8); // every article still written
   assert.equal(s.fullTextNull.blocked, 8);
 });
+
+test('two sources list the same URL: the later one fills what the earlier lacked (a date), never overwrites', async () => {
+  const reg = {
+    ...registry,
+    fetchers: {
+      fake: async (url) => {
+        if (url === 'https://news.test/cards') return { url, body: 'cards' };
+        if (url === 'https://news.test/feed') return { url, body: 'feed' };
+        throw Object.assign(new Error('HTTP 403'), { status: 403, blocked: true }); // articles blocked
+      },
+    },
+    discoverers: {
+      both: (body) => body === 'cards'
+        ? [{ url: 'https://news.test/a', title: 'Card title', publishedDate: null, description: null }]
+        : [{ url: 'https://news.test/a', title: 'Feed title', publishedDate: date, description: 'From the feed' }],
+    },
+  };
+  const e = { ...entry, discover: 'both', startUrls: ['https://news.test/cards', 'https://news.test/feed'] };
+  const { records, stats } = await quiet(() => runAll([e], { registry: reg, window }));
+  assert.equal(records.length, 1); // written from list data: the feed's date made it provable
+  assert.equal(records[0].publishedDate, date);
+  assert.equal(records[0].title, 'Card title'); // the first source's value stays
+  assert.equal(stats.Fake.droppedNoDate, 0);
+});
