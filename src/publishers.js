@@ -214,8 +214,25 @@ const ENTRIES = [
   {
     name: 'Business Wire',
     site: 'businesswire.com',
+    enabled: true,
     defaultType: 'pressReleases', // a wire: companies' own announcements (D47)
-    startUrls: ['https://www.businesswire.com/newsroom'],
+    // Akamai Bot Manager blocks every HTML page (403 "Page Unavailable"), over HTTP and in the browser (D64).
+    // The sitemaps answer only with the client hints a real Chrome sends with this User-Agent (D13 step 2).
+    // Articles are written from the daily Google News sitemaps with fullText null, reason `blocked`;
+    // the circuit breaker (D61) stops requesting them after 5 blocks in a row.
+    headers: {
+      'sec-ch-ua': '"Chromium";v="131", "Google Chrome";v="131", "Not_A Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+    },
+    delayMs: 3000, // robots.txt asks named crawlers for 10 s; ~20 requests a run
+    startUrls: [
+      // The given newsroom (R-D2): blocked (403), recorded as "page 1 failed" each run.
+      { url: 'https://www.businesswire.com/newsroom', discover: 'html-list', paging: null, list: { item: 'li', link: 'a' } },
+      // Added route (D64), from robots.txt: one Google News sitemap per UTC day, every release in every
+      // language, with title, publish date and image. One file per day of the window.
+      { url: 'https://www.businesswire.com/sitemap/google-news/{from}.xml.gz', discover: 'sitemap', sliceDays: 1, paging: null },
+    ],
   },
   {
     name: 'Reuters',

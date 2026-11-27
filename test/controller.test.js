@@ -178,6 +178,28 @@ test('date slices (D60): the window counts as covered only if every slice ran ou
   assert.equal(s.windowStartReached, false);
 });
 
+test('date slices (D64): a one-page slice (e.g. one sitemap file per day) is complete once it loads', async () => {
+  const reg = {
+    ...registry,
+    fetchers: {
+      fake: async (url) => {
+        if (url.includes('2026-11-20')) throw Object.assign(new Error('HTTP 404'), { status: 404 });
+        return { url, body: url };
+      },
+    },
+    discoverers: { daily: (body) => [{ url: `https://news.test/${body.split('/').pop()}`, publishedDate: date }] },
+  };
+  const e = {
+    ...entry, discover: 'daily', fetcher: { list: 'fake', article: 'fake' },
+    startUrls: [{ url: 'https://news.test/day/{from}.xml', sliceDays: 1, paging: null }],
+  };
+  const { stats } = await quiet(() => runAll([e], { registry: reg, window, sample: 1 }));
+  const s = stats.Fake;
+  assert.equal(s.sources.length, 15); // Nov 10 → Nov 24, one file a day
+  assert.deepEqual(s.sources.filter((x) => !x.sliceComplete).map((x) => x.slice.from), ['2026-11-20']); // the failed day
+  assert.equal(s.windowStartReached, false);
+});
+
 test('circuit breaker (D61): after 5 blocked articles in a row, the rest are written from list data, not requested', async () => {
   const requested = [];
   const reg = {

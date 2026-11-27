@@ -23,7 +23,8 @@ const isRetryable = (status) => status === 429 || status >= 500;
 
 /**
  * @param {string} url
- * @param {{ delayMs?: number }} [entry] the schema entry (only `delayMs` is used)
+ * @param {{ delayMs?: number, headers?: Record<string, string> }} [entry] the schema entry: `delayMs`, and
+ *   `headers` added to the defaults (D13 step 2: a site may want what a real browser always sends, D64)
  * @param {{ delayMs?: number }} [opts] overrides the entry's delayMs for this call
  * @returns {Promise<{ url: string, body: string }>} `url` is the final URL after redirects
  * @throws {Error} after the last retry; `err.status` is set when the server answered with an HTTP error,
@@ -37,7 +38,7 @@ export async function fetchHttp(url, entry = {}, opts = {}) {
     // Backoff: 1x, 2x, 4x, 8x the base delay.
     await sleep(delayMs * 2 ** attempt);
     try {
-      const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const res = await fetch(url, { headers: { ...HEADERS, ...entry.headers }, signal: AbortSignal.timeout(TIMEOUT_MS) });
       const body = await res.text();
       const blocked = blockReason({ status: res.status, headers: res.headers, body });
       if (res.ok && !blocked) return { url: res.url, body };

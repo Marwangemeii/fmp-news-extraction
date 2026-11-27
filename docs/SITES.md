@@ -153,13 +153,28 @@ Template for each site:
 - **Notes:** may be bot-protected. **(hypothesis)**
 
 ## 9. Business Wire
-- **Start URLs:** /newsroom
-- **Notes:** may be bot-protected. **(hypothesis)**
+- **Start URLs:** `https://www.businesswire.com/newsroom` (given, blocked: `page 1 failed` each run), plus the added daily Google News sitemaps `https://www.businesswire.com/sitemap/google-news/{YYYY-MM-DD}.xml.gz` (D64).
+- **Discovery route:** robots.txt (no `User-agent: *` group, so nothing is disallowed for us; named crawlers get `Crawl-delay: 10`) lists `sitemap-index.xml` (site pages), `sitemap/standard/smaps-bw-mod.xml` and `sitemap/google-news/gn-bw-mod.xml` (each an index of 345 **daily** files) and an MRSS feed. A daily Google News file holds every release of that UTC day, all languages: `<loc>`, `news:publication_date` ("2026-11-26T22:12:00.000Z"), `news:title`, `news:language`, `image:loc`. Same URL set as the standard daily file (224 / 796 / 433 on Nov 26 / 18 / 13).
+- **Covering 14 days (2026-11-27, window from 2026-11-13T00:00Z):** 15 files, all loaded (`single page` → slice complete). Per day: 27th 165 (to 18:02Z), 26th 224 (Thanksgiving), 25th 439, 24th 627, 23rd 587, 22nd 43, 21st 40, 20th 473, 19th 894, 18th 796, 17th 973, 16th 664, 15th 11, 14th 54, 13th 433. **6,416 discovered = 6,416 in window**, oldest 2026-11-13T00:08Z, `windowStartReached: true`. Discovery 16 requests, ~70 s at 3 s pacing. Languages on Nov 18: en 630, fr 28, es/it/de 21, nl 19, ar 12, ja/zh-HK 11, zh-CN 10, pt 9…
+- **Dates checked:** 2 releases in both the MRSS feed and the Nov 27 sitemap: same time to the minute (10:06Z, 10:05Z).
+- **Fetcher:** HTTP with the entry's `headers` (`sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`): without them even the sitemaps are Akamai "Access Denied". Articles: **blocked**; the breaker (D61) stops after 5.
+- **Selectors / clean-up:** none verified (no article page ever loaded). Defaults stay.
+- **What gets written:** every in-window release: url, title, publishedDate, image, `text: ""`, `fullText: null` (`blocked`), `others`, no LLM call (D41). **LLM cost: $0.** Sample 100: 100 written, 95 not requested after 5 blocks. Validate PASS (warnings: R-A9 per record, R-D2 for `/newsroom`, sample, LABEL). Labelled `--limit 10`: 10 written, 0 LLM calls, $0.
+- **Production approach:** FMP's proxy network (`PROXY_URL`, D63) or Business Wire's licensed feed.
 - **Blocking log:**
 
 | Date | What we tried | What we saw (status, page content) | Result |
 |---|---|---|---|
-| 2026-11-25 | `/newsroom` with curl (Chrome UA) and with our `fetchHttp` (Node fetch) | **403** "Access Denied" (Akamai) on both | blocked for plain HTTP; Phase 4 tries the ladder (D13). Its eval fixture slots went to GlobeNewswire |
+| 2026-11-25 | `/newsroom` with curl (Chrome UA) and with our `fetchHttp` (Node fetch) | **403** "Access Denied" (Akamai) on both | blocked for plain HTTP. Its eval fixture slots went to GlobeNewswire |
+| 2026-11-27 | `robots.txt`, `/newsroom`, Node fetch (Chrome UA) | 403 "Access Denied" (`AkamaiGHost`) | |
+| 2026-11-27 | `feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ==` (the classic "all news" feed) | 200, "The RSS channel you requested was deactivated by the administrator." | no all-news RSS |
+| 2026-11-27 | category RSS `?rss=G1QFDERJXkJeGVtRWA==` (Technology: Networks), MRSS from robots.txt | 200; MRSS 47 items over ~1 week, descriptions cut at ~500 chars | not used: truncated, partial; used to cross-check dates |
+| 2026-11-27 | full Chrome header set (`sec-ch-ua*`, `Sec-Fetch-*`, `Upgrade-Insecure-Requests`) | sitemaps + robots.txt **200**; `/newsroom`, articles (`/news/home/<id>/<lang>`, with/without slug) **403** "Page Unavailable" with an Akamai Bot Manager script | step 2 opens the sitemaps only. One header group at a time: only `sec-ch-ua*` matters |
+| 2026-11-27 | headless Chromium (normal Chrome UA) on `/newsroom`, robots.txt | `net::ERR_HTTP2_PROTOCOL_ERROR` (connection reset) | step 3 fails |
+| 2026-11-27 | headed Chromium (`BROWSER_HEADED=1`), an article and `/newsroom` | 403 | step 3 fails; no stealth (D62) |
+| 2026-11-27 | `businesswire.com` (no www), `newsroom.`/`services.businesswire.com`, `m.businesswire.com` | 301 to www; marketing pages; TLS name error | no other route |
+| 2026-11-27 | daily Google News sitemaps, 15 files at 3 s | all 200 | **used** (D64) |
+| 2026-11-27 | run: articles over HTTP + breaker | 5 × 403, rest not requested | as Benzinga (D61, D62) |
 
 ## 10. Reuters
 - **Start URLs:** /business/, /markets/

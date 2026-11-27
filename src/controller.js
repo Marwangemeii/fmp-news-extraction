@@ -201,9 +201,12 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
       discovered: result.items.length,
       oldestDate: result.oldestDate,
       reachedStart: result.reachedStart,
-      // A date slice (D60) is complete only if paging ran out of results ("empty page"). Any other stop
+      // A date slice (D60) is complete only if paging ran out of results ("empty page"), or if it is one
+      // page by design (no paging, e.g. a daily sitemap file, D64) and that page loaded. Any other stop
       // (max pages, the site's result cap → "no new items", an error) leaves a hole in its days.
-      ...(source.slice ? { slice: source.slice, sliceComplete: result.stop === 'empty page' } : {}),
+      ...(source.slice
+        ? { slice: source.slice, sliceComplete: result.stop === 'empty page' || result.stop === 'single page' }
+        : {}),
       ...(result.error ? { error: result.error } : {}),
     });
     s.pagesFetched += result.pages;
