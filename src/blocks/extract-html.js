@@ -37,7 +37,8 @@ export function extractHtml(html, item, entry, finalUrl) {
   return {
     url: canonicalizeUrl(canonical || finalUrl || item.url, finalUrl || item.url),
     title: clean(pick($, sel.title)) || item.title,
-    image: absolute(pick($, sel.image), finalUrl || item.url),
+    // The page's image first; else the list's (a sitemap's <image:loc>), e.g. when the page was blocked.
+    image: absolute(pick($, sel.image), finalUrl || item.url) ?? item.image ?? null,
     publishedDate: toIso(pick($, sel.publishedDate)) || item.publishedDate,
     // The publisher's own summary first, never a guess (D32): feed/API description → page meta description
     // → first paragraph of the body. If none exists, text is "".

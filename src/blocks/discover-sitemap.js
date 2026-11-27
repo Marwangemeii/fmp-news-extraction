@@ -19,7 +19,7 @@ const parser = new XMLParser({
  *
  * @param {string} xml
  * @returns {{ url: string, title: string | null, publishedDate: string | null, listDate: string | null,
- *             description: null }[]}
+ *             description: null, image: string | null }[]}
  */
 export function discoverSitemap(xml) {
   let urls;
@@ -36,7 +36,14 @@ export function discoverSitemap(xml) {
       publishedDate: toIso(u.news?.publication_date),
       listDate: toIso(u.lastmod),
       description: null,
+      image: firstImage(u.image), // <image:image><image:loc>; used when the page gives none (e.g. blocked)
     }));
+}
+
+/** <image:image> may appear once (an object) or several times (an array). */
+function firstImage(img) {
+  const first = Array.isArray(img) ? img[0] : img;
+  return first?.loc ? String(first.loc).trim() : null;
 }
 
 /** ISO with an offset or Z → ISO UTC; anything else → null. */

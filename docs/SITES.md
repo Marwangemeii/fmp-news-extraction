@@ -66,8 +66,33 @@ Template for each site:
 - **Notes:** may be bot-protected. **(hypothesis)**
 
 ## 5. Benzinga
-- **Start URLs:** the Google News sitemap, /news
-- **Notes:** Google News sitemaps only list about the last 2 days by design, so another route is needed (the sitemap index, or paging /news). **(hypothesis)**
+- **Start URLs:** `/sitemap-benzinga.com/www/googlenews.xml` and `/news` (given), plus the added `/sitemap-benzinga.com/www/latest.xml` (from robots.txt).
+- **Discovery route:**
+  - Google News sitemap (HTTP, `sitemap`): ~335 URLs, 2 days, with `news:publication_date`, `news:title`, `news:stock_tickers` ("NYSE:APO") and `image:loc`. It ignores `?page=2`; `googlenews-2.xml` is 404.
+  - `/news` (browser, `html-list`, one page): ~22 cards (`.post-card`, link `a.post-card-article-link`, title `span.inline`), **no dates** on the cards. Plain HTTP gets 403.
+  - `latest.xml` (HTTP, `sitemap`, one request): 10,000 URLs, newest first by `<lastmod>`, back ~5 weeks; no titles, no publish dates.
+- **Covering 14 days (2026-11-27, window from 2026-11-13T00:00Z):** `latest.xml` reaches 2026-10-21 → `windowStartReached: true`. **2,804 URLs in window** (by `publication_date`, else `lastmod`). Discovery: 3 requests, ~20 s. By section (lastmod, 2,762 earlier in the day): markets 891, news 646, trading-ideas 607, analyst-stock-ratings 189, crypto 162, personal-finance 90, etfs 68, opinion 62, m-a 34, real-estate 11, government 2.
+- **Fetcher:** sitemaps over HTTP. Articles: **blocked** (see the log). They are requested over HTTP, and after 5 blocks in a row the rest aren't requested (D61).
+- **Selectors (verified on 2 pages loaded before the block, kept for when access exists):** title `h1.article-title` (og:title adds " - SanDisk (NASDAQ:SNDK)"); body `.article-content-body-only`; date `article:published_time` ("2026-11-27T10:29:28.000-05:00", the default selector); og:image; canonical.
+- **Clean-up (same):** `.ad-reserved` (ad slots, incl. the "Don't Miss" widget), `.read-next-block`, `p.copyright`. A last line "This content was partially produced with the help of AI tools and was reviewed and published by Benzinga editors." is part of the article and kept.
+- **What gets written:** articles with a provable publish date, i.e. those in the Google News sitemap: url, title, publishedDate, image (from the sitemap), `text: ""`, `fullText: null` (reason `blocked`), `others` (no LLM call, D41). In the 100-article sample: 11 written, 89 counted as `droppedNoDate` (lastmod only). A full run would write ~340 and count ~2,460 as not written. **LLM cost: $0.**
+- **robots.txt:** allows the article paths; disallows `/pressreleases`, `/secfilings`, `/bzfeed` and others (not used).
+- **Production approach:** FMP's proxy network or Benzinga's licensed news API (D62).
+- **Blocking log (D13 ladder):**
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-27 | given Google News sitemap, Node fetch (Chrome UA) | 200, 339 URLs, 2 days | used |
+| 2026-11-27 | `/news` and an article page, Node fetch | **403**, Cloudflare "Attention Required!", "Sorry, you have been blocked" (`server: cloudflare`, `cf-ray`) | blocked for plain HTTP |
+| 2026-11-27 | same, + full browser headers (`sec-ch-ua`, `Sec-Fetch-*`, `Upgrade-Insecure-Requests`) | 403, same page | headers don't help (step 2) |
+| 2026-11-27 | AMP `/amp/content/<id>` | 403, same page | no alternative page |
+| 2026-11-27 | `/feed` (RSS) | 200, 25 "Top Stories" with **full bodies** in `<description>`, ~1 day; `?page=2`, `?paged=2`, `/feed/` = the same 25 items | too short for the window; a possible fullText source for 25 articles, not used |
+| 2026-11-27 | `/news/feed`, `/markets/feed`, `/news/earnings/feed`, `/topic/earnings/feed`, `/rss`, `/money/feed/` | 403; `/feeds` 404; `feeds.benzinga.com` DNS failure | no other RSS |
+| 2026-11-27 | sitemaps: `sitemap.xml` index → `archive.xml` (monthly files, **no dates**; Nov = 6,808 URLs), `latest.xml` (lastmod), `channels`, `reports`, `app-routes`, `authors`, `quotes`; `sitemap_index.xml` → `/money/feed/post-sitemap*.xml`; `/sec/insider-trades/sitemap.xml`; `googlenews.xml?page=2` | all 200; only `googlenews.xml` has publish dates; `/money/wp-json/…` 403 | `latest.xml` added for coverage; no route with publish dates beyond 2 days |
+| 2026-11-27 | headless Chromium (Playwright), default UA ("HeadlessChrome") | 403 on `/news` and an article | step 3 alone fails |
+| 2026-11-27 | headless Chromium with a normal Chrome UA | **first page of a session 200**, then 403 on every page, also 75 s later; after the first page: cookies `cf_clearance`, `__cf_bm`, `_cfuvid`; `navigator.webdriver = true` | Cloudflare's script flags the automated session |
+| 2026-11-27 | considered: a fresh browser session per article; hiding automation markers (`navigator.webdriver`, `AutomationControlled`) | not run | **rejected** (Marwan): they deliberately defeat the block (D62) |
+| 2026-11-27 | run with articles over HTTP + circuit breaker | 5 × 403, then the rest not requested (95 of 100 in the sample) | D61; production: FMP's proxy network or Benzinga's licensed API |
 
 ## 6. CryptoPotato
 - **Start URLs:** `https://cryptopotato.com/feed` (given), plus the WordPress REST API `https://cryptopotato.com/wp-json/wp/v2/posts?per_page=100&_fields=link,date_gmt,title,excerpt` (added, D27).

@@ -12,6 +12,9 @@ import { cached } from './lib/cache.js';
 import { createLimiter } from './lib/pool.js';
 import { BLOCKED_STATUSES } from './lib/blocked.js';
 import { LLM_CONCURRENCY } from './llm/config.js';
+
+/** After this many article pages blocked in a row, a publisher's remaining articles aren't fetched (D61). */
+const BLOCKED_IN_A_ROW = 5;
 const LABELS = ['earnings', 'dividends', 'splits', 'ipos', 'others'];
 
 /**
@@ -108,6 +111,7 @@ function newStats() {
     droppedOutsideWindow: 0,
     droppedNoDate: 0,
     droppedNoDateUrls: [],
+    notFetchedAfterBlocks: 0, // articles not requested after BLOCKED_IN_A_ROW blocks in a row (D61)
     oldestDate: null,
     windowStartReached: false,
     labels: Object.fromEntries(LABELS.map((l) => [l, 0])), // articles per label
@@ -234,21 +238,35 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
 
   // 3. Fetch → extract, one article at a time (D6: polite to the site).
   const articles = [];
+  let blockedInARow = 0;
   for (const item of todo) {
     let article;
     let nullReason = null; // why fullText is null, if it is (D31)
-    try {
-      const page = await fetchArticle(item.url, entry);
-      article = extract(page.body, item, entry, page.url);
-      if (article.fullText === null) nullReason = 'noBody'; // the page loaded but has no text body
-    } catch (err) {
-      // Temporary until Phase 4 (D21): keep the article from list data, with fullText null.
-      // Extracting from an empty page makes every field fall back to the list item.
-      s.errors++;
-      // err.blocked: a block or challenge page, even one served with status 200 (D53).
-      nullReason = err.blocked || BLOCKED_STATUSES.includes(err.status) ? 'blocked' : 'error';
-      console.error(`[${entry.name}] article failed (${nullReason}), writing list data only: ${err.message}`);
+    if (blockedInARow >= BLOCKED_IN_A_ROW) {
+      // Circuit breaker (D61): the site is refusing us; asking for the rest would only add load.
+      // The article is still written from list data, like any blocked one.
+      nullReason = 'blocked';
+      s.notFetchedAfterBlocks++;
       article = extract('', item, entry, item.url);
+    } else {
+      try {
+        const page = await fetchArticle(item.url, entry);
+        article = extract(page.body, item, entry, page.url);
+        if (article.fullText === null) nullReason = 'noBody'; // the page loaded but has no text body
+        blockedInARow = 0;
+      } catch (err) {
+        // Keep the article from list data, with fullText null (D21, D31).
+        // Extracting from an empty page makes every field fall back to the list item.
+        s.errors++;
+        // err.blocked: a block or challenge page, even one served with status 200 (D53).
+        nullReason = err.blocked || BLOCKED_STATUSES.includes(err.status) ? 'blocked' : 'error';
+        blockedInARow = nullReason === 'blocked' ? blockedInARow + 1 : 0;
+        console.error(`[${entry.name}] article failed (${nullReason}), writing list data only: ${err.message}`);
+        if (blockedInARow === BLOCKED_IN_A_ROW) {
+          console.error(`[${entry.name}] ${BLOCKED_IN_A_ROW} articles blocked in a row: not fetching the rest of this publisher's articles (D61)`);
+        }
+        article = extract('', item, entry, item.url);
+      }
     }
 
     if (!article.publishedDate) {
@@ -309,7 +327,8 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
       `${cache ? ` · from cache ${s.fromCache}` : ''}` +
       `${s.fullTextNullUrls.length ? ` · fullText null ${JSON.stringify(s.fullTextNull)}` : ''}` +
       `${s.droppedOutsideWindow ? ` · page date outside window ${s.droppedOutsideWindow}` : ''}` +
-      `${s.droppedNoDate ? ` · no publish date ${s.droppedNoDate}` : ''}`,
+      `${s.droppedNoDate ? ` · no publish date ${s.droppedNoDate}` : ''}` +
+      `${s.notFetchedAfterBlocks ? ` · not fetched after ${BLOCKED_IN_A_ROW} blocks in a row ${s.notFetchedAfterBlocks}` : ''}`,
   );
   const l = s.llm;
   console.log(

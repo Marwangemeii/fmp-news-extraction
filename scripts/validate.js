@@ -256,7 +256,14 @@ if (stats.label) add(warnings, 'LLM', 0, '', `dev run with LABEL=${stats.label}:
 // A source whose page 1 failed (e.g. blocked) is isolated by the controller; show it here so it isn't missed.
 // Same for articles left out because no publish date could be proven (D58).
 for (const [name, s] of Object.entries(stats.publishers ?? {})) {
-  for (const x of s.droppedNoDateUrls ?? []) add(warnings, 'R-D1', 0, x.url, `${name}: not written, no provable publish date (${x.reason})`);
+  // One warning per publisher, not per URL: a blocked site can have thousands (all listed in stats.json).
+  const noDate = s.droppedNoDateUrls ?? [];
+  if (noDate.length) {
+    const reasons = {};
+    for (const x of noDate) reasons[x.reason] = (reasons[x.reason] ?? 0) + 1;
+    add(warnings, 'R-D1', 0, noDate[0].url, `${name}: ${noDate.length} articles not written, no provable publish date ${JSON.stringify(reasons)} (all in stats.json droppedNoDateUrls; first shown)`);
+  }
+  if (s.notFetchedAfterBlocks) add(warnings, 'R-A9', 0, '', `${name}: ${s.notFetchedAfterBlocks} article pages not requested after repeated blocks (D61)`);
   for (const src of s.sources ?? []) {
     if (src.error) add(warnings, 'R-D2', 0, '', `${name}: source ${src.url} → ${src.pagingStop}: ${src.error}`);
   }

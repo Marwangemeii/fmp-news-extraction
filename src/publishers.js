@@ -96,11 +96,12 @@ const ENTRIES = [
   {
     name: 'Benzinga',
     site: 'benzinga.com',
-    enabled: false, // configured, verified in its own commit (Phase 4)
-    // Cloudflare blocks plain HTTP on article pages and /news ("Sorry, you have been blocked", 403),
-    // and headless Chromium with its default "HeadlessChrome" user agent too. The browser fetcher,
-    // which sends a normal Chrome user agent, gets the pages (D55). The sitemaps work over HTTP.
-    fetcher: { list: 'http', article: 'browser' },
+    enabled: true,
+    // Article pages are blocked by Cloudflare (403 "Sorry, you have been blocked") over HTTP, and in the
+    // browser after the first page of a session (D62). We stop at the legitimate ladder (no stealth), so
+    // articles are written from sitemap data with fullText null, reason `blocked`; the circuit breaker
+    // (D61) stops requesting them after 5 blocks in a row. The sitemaps work over HTTP.
+    fetcher: { list: 'http', article: 'http' },
     delayMs: 2000,
     startUrls: [
       // The given Google News sitemap (R-D2): ~340 articles, ~2 days, with publish dates and titles.

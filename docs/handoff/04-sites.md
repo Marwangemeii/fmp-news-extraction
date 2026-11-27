@@ -32,6 +32,14 @@ Phase 4, session A: Newsfile, GlobeNewswire, Benzinga, in that order. For each: 
 - Tests: `test/paging.test.js` (+1 slices), `test/controller.test.js` (+1 incomplete slice). **93 tests.**
 - Docs: D57 updated, D60, SITES (GlobeNewswire).
 
+**Step 3 (Benzinga):**
+- `src/controller.js`: **circuit breaker**: after 5 article pages blocked in a row, the rest are written from list data without a request (`notFetchedAfterBlocks`, D61).
+- `src/blocks/discover-sitemap.js`: reads `<image:loc>`; `src/blocks/extract-html.js`: image falls back to the list item's image.
+- `scripts/validate.js`: one grouped R-D1 warning per publisher for `droppedNoDate`, one R-A9 warning for `notFetchedAfterBlocks`.
+- `src/publishers.js`: Benzinga enabled: Google News sitemap + `/news` (browser) + `latest.xml`; articles over HTTP (blocked); selectors kept for when access exists.
+- Tests: `test/controller.test.js` (+1 breaker), `test/discover-list.test.js` (sitemap image). **94 tests.**
+- Docs: D61, D62, D55 corrected, SITES (Benzinga, full ladder).
+
 ## 3. How it works
 **Parallel publishers, one LLM limiter (`controller.js`):**
 ```js
@@ -99,12 +107,15 @@ found = discover(body, url, source);                  // throws { blocked, rateL
 - **D58** `sitemap` discoverer; lastmod only as a list date; `droppedNoDate`.
 - **D59** rate-limited list pages: `blockedText`, per-source `delayMs`, 90 s pause × 3.
 - **D60** date-sliced sources (GlobeNewswire's search caps at 5,000 results).
+- **D61** circuit breaker: 5 blocked articles in a row → stop requesting that publisher's articles.
+- **D62** Benzinga: stop at the legitimate ladder (Marwan): no stealth, no fresh session per article; written from sitemap data; production = FMP's proxy network or Benzinga's licensed API.
 Numbering differs from the plan (it said D52 = GNW route, D53 = browser): dev switches and block detection got their own entries.
 
 ## 5. Deviations from the plan or the docs
 - **Newsfile needed a rate-limit fix the plan didn't foresee** (D59): its search stops answering after ~37 quick pages. Found because paging "ended" at Nov 21 with `windowStartReached: false`.
 - `mapLimit` was removed (nothing else used it); `createLimiter` replaces it.
 - Two browser-fetcher bugs found and fixed during the Newsfile run (empty body during the challenge reload; half-loaded page). See D55.
+- **Benzinga articles are blocked** (D62): the plan expected the browser to get them; the first page of a session loads, then Cloudflare blocks the session. Marwan chose to stop at the legitimate ladder.
 - **GlobeNewswire needed date slices** (D60), not one paged search: the search caps at 5,000 results, and the window holds ~9,900 releases (more than the ~6,000 estimated at plan time).
 
 ## 6. Requirements covered
@@ -137,6 +148,14 @@ $env:LABEL=''; $env:LLM_BUDGET_USD='0.3'; npm start -- --only Newsfile --limit 1
 - Labelled `--limit 10` (Thanksgiving Friday's newest): pre-filter 4/10, all `others`, 0 errors, **$0.0016**.
 - **Full-run LLM estimate for GlobeNewswire:** the two samples disagree (Newsfile $0.00087/article, GNW $0.00016/article on a holiday). With Phase 3's measured unit costs (classify ~$0.00032, extract ~$0.0009) and an assumed 55% pre-filter pass and 15% labelled: 9,882 × (0.55 × 0.00032 + 0.15 × 0.0009) ≈ **$3.1** (range ~$1.6–8.6 for the two samples' rates). **This is the biggest single cost of Phase 5.**
 
+**Benzinga (2026-11-27):**
+- Sources: Google News sitemap 335 (2 days, publish dates), `/news` 22 (browser, no dates), `latest.xml` 10,000 (oldest lastmod 2026-10-21 → `windowStartReached: true`). **In window 2,804.** Discovery 3 requests, ~20 s.
+- Articles: 403 over HTTP; the breaker stopped after 5 (95 of the 100-sample not requested). Sample 100: **11 written** (in the Google News sitemap: title, date, image, `fullText: null` blocked), **89 not written** (`droppedNoDate`: lastmod only).
+- Validate PASS (warnings: R-A9 per blocked record, 1 grouped R-D1, sample, LABEL). Labelled `--limit 10`: 9 written, 0 LLM calls (fullText null → others, D41), **$0**.
+- **Full run expectation:** ~340 written (2 days), ~2,460 counted as not written; LLM $0.
+
+**Session totals:** LLM spend **~$0.010** (Newsfile $0.0087 + GlobeNewswire $0.0016 + Benzinga $0). In-window counts: **Newsfile 2,068 · GlobeNewswire 9,882 · Benzinga 2,804** (of which ~340 writable). Full-run LLM estimate for the three: Newsfile ~$1.8 + GlobeNewswire ~$3.1 (range $1.6–8.6) + Benzinga $0 ≈ **$5** (range $3.4–10.4).
+
 ## 9. Known issues / open questions for the orchestrator
 1. **French releases** (Newsfile feed, GlobeNewswire): the French Trans Mountain release got `earnings` with a French evidence sentence; prompts are English. Fine by the rules (evidence is verbatim), but worth a look in Phase 5.
 2. **Newsfile's search list may be English-only** (its form carries a hidden `l=en`); French releases beyond the feed's 2 hours may be missing. Check in Phase 5 (`/search?k=&l=fr`?).
@@ -146,5 +165,9 @@ $env:LABEL=''; $env:LLM_BUDGET_USD='0.3'; npm start -- --only Newsfile --limit 1
 5. **LLM budget for Phase 5:** GlobeNewswire alone is ~9,900 articles (~$3, maybe more on earnings-heavy days). Newsfile ~$1.8. Before the full run, decide whether to measure a `--sample 100` labelled run per wire first (~$0.03–0.09 each) to pin the rate.
 6. GlobeNewswire's busiest 3-day slice was 3,323 of a 5,000 cap; an earnings peak could exceed it. The run would show it (`sliceComplete: false`, `windowStartReached: false`); the fix is `sliceDays: 2`.
 
+7. **Benzinga writes only ~340 of ~2,800 in-window articles** (those with a publish date in the Google News sitemap), all with `fullText: null`. The README must say so, with the ladder (D62). The D13 "proxy setting via an env variable" is **not built yet**; with FMP's proxy, Benzinga is a one-line fetcher change.
+8. **Budget:** the three-site estimate (~$5, up to ~$10 if GlobeNewswire labels like Newsfile) plus TechCrunch/CryptoPotato (~$0.1) and session B's sites could exceed the ~$9.27 left. Measuring a labelled `--sample 100` per wire before Phase 5 (~$0.02–0.09 each) would pin it; a cheaper pre-filter for wire releases (e.g. skip law-firm class-action notices, ~1/3 of Newsfile) is an option.
+9. Runtime for Phase 5 (parallel): GlobeNewswire ~9,900 articles over HTTP at ~1.3 s ≈ 3.5 h is now the slowest site; Newsfile ~2,070 through the browser ≈ 1.5–2 h; Benzinga ~1 min.
+
 ## 10. Suggested next step
-Benzinga (sitemaps + browser): see the Benzinga section once done.
+Session B: Business Wire, Zacks, Fox Business, Investing.com, Reuters. The building blocks from this session (browser fetcher, html-list, sitemap, date slices, rate-limit handling, circuit breaker) should cover most of them as schema-only entries. Before Phase 5: decide the budget question (item 8) and whether GlobeNewswire's runtime needs 2 requests at a time.

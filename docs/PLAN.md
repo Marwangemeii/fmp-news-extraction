@@ -9,7 +9,7 @@ Work on one phase at a time. Each phase ends with a handoff file in `docs/handof
 | 1. Skeleton + first real path | Sat 21 | done |
 | 2. Two easy sites, full window | Sun 22 | done (awaiting diff approval) |
 | 3. Labeller, extractor, traces | Mon 23 – Tue 24 | done (M1 + M2; M2 awaiting diff approval) |
-| 4. Remaining 8 sites | Wed 25 – Thu 26 | in progress (session A: Newsfile, GlobeNewswire done; Benzinga next) |
+| 4. Remaining 8 sites | Wed 25 – Thu 26 | in progress (session A done: Newsfile, GlobeNewswire, Benzinga (blocked, logged); session B next) |
 | 5. Full run + quality check | Fri 27 | todo |
 | 6. README, methodology, rehearsal | Sat 28 | todo |
 | 7. Final run + submit | Sun 29 | todo |

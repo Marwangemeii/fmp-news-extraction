@@ -177,3 +177,27 @@ test('date slices (D60): the window counts as covered only if every slice ran ou
   assert.deepEqual(s.sources.filter((x) => !x.sliceComplete).map((x) => x.slice.from), ['2026-11-19']);
   assert.equal(s.windowStartReached, false);
 });
+
+test('circuit breaker (D61): after 5 blocked articles in a row, the rest are written from list data, not requested', async () => {
+  const requested = [];
+  const reg = {
+    ...registry,
+    fetchers: {
+      fake: async (url) => {
+        if (url === 'https://news.test/many') return { url, body: '' };
+        requested.push(url);
+        throw Object.assign(new Error('HTTP 403'), { status: 403, blocked: true });
+      },
+    },
+    discoverers: {
+      many: () => Array.from({ length: 8 }, (_, i) => ({ url: `https://news.test/a${i}`, title: `A${i}`, publishedDate: date, description: null })),
+    },
+  };
+  const e = { ...entry, startUrls: ['https://news.test/many'], discover: 'many' };
+  const { records, stats } = await quiet(() => runAll([e], { registry: reg, window }));
+  const s = stats.Fake;
+  assert.equal(requested.length, 5);
+  assert.equal(s.notFetchedAfterBlocks, 3);
+  assert.equal(records.length, 8); // every article still written
+  assert.equal(s.fullTextNull.blocked, 8);
+});

@@ -74,7 +74,7 @@ test('html-list: a missing list config is a schema error, not an empty page', ()
 const NEWS_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
 <url><loc>https://news.test/news/26/11/1/apollo</loc><news:news><news:publication><news:name>X</news:name></news:publication>
-<news:title>If You Invested $1000 In Apollo &amp; Co</news:title><news:publication_date>2026-11-27T15:30:16+00:00</news:publication_date></news:news></url>
+<news:title>If You Invested $1000 In Apollo &amp; Co</news:title><news:publication_date>2026-11-27T15:30:16+00:00</news:publication_date></news:news><image:image><image:loc>https://cdn.news.test/a.jpg?crop=600:400&amp;x=1</image:loc></image:image></url>
 </urlset>`;
 const LASTMOD_SITEMAP = `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 <url><loc>https://news.test/news/26/11/2/visa</loc><lastmod>2026-11-27T15:31:33Z</lastmod><changefreq>always</changefreq></url>
@@ -84,7 +84,7 @@ const LASTMOD_SITEMAP = `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/
 test('sitemap: publication_date is the publish date; lastmod only a listDate; no zone → null', () => {
   assert.deepEqual(discoverSitemap(NEWS_SITEMAP), [{
     url: 'https://news.test/news/26/11/1/apollo', title: 'If You Invested $1000 In Apollo & Co',
-    publishedDate: '2026-11-27T15:30:16.000Z', listDate: null, description: null,
+    publishedDate: '2026-11-27T15:30:16.000Z', listDate: null, description: null, image: 'https://cdn.news.test/a.jpg?crop=600:400&x=1',
   }]);
   const [a, b] = discoverSitemap(LASTMOD_SITEMAP);
   assert.equal(a.publishedDate, null);
