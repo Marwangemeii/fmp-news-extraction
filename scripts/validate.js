@@ -264,6 +264,8 @@ for (const [name, s] of Object.entries(stats.publishers ?? {})) {
     add(warnings, 'R-D1', 0, noDate[0].url, `${name}: ${noDate.length} articles not written, no provable publish date ${JSON.stringify(reasons)} (all in stats.json droppedNoDateUrls; first shown)`);
   }
   if (s.notFetchedAfterBlocks) add(warnings, 'R-A9', 0, '', `${name}: ${s.notFetchedAfterBlocks} article pages not requested after repeated blocks (D61)`);
+  if (s.dayOnlyDates) add(warnings, 'R-A1', 0, '', `${name}: ${s.dayOnlyDates} articles have a day-only publish date (the site states no time): 00:00 of that day in the schema's dayZone (D69)`);
+  if (s.enabled === false && s.reason) add(warnings, 'R-D2', 0, '', `${name} not collected: ${s.reason}`);
   for (const src of s.sources ?? []) {
     if (src.error) add(warnings, 'R-D2', 0, '', `${name}: source ${src.url} → ${src.pagingStop}: ${src.error}`);
   }

@@ -71,6 +71,17 @@ function toUtc(date, minutes, zoneRaw) {
   return new Date(utc).toISOString();
 }
 
+/**
+ * 00:00 of a stated day ("2026-11-27") in a named zone ('ET', 'CT', 'UTC'…) → ISO UTC (D69).
+ * For sites that publish only the day: a documented convention, flagged as day precision.
+ * @returns {string | null} null for an unknown zone
+ */
+export function dayStartUtc(date, zone) {
+  const z = String(zone).toLowerCase();
+  if (!(z in FIXED) && !(z in ZONES)) return null;
+  return toUtc(date, 0, z);
+}
+
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 const ZONE_WORDS = 'et|ct|mt|pt|est|edt|cst|cdt|mst|mdt|pst|pdt|gmt|utc|bst|cet|cest';
 /** "2026-11-27 10:56 AM EST" (date first) */

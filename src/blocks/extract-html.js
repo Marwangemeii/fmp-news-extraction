@@ -1,10 +1,12 @@
 import * as cheerio from 'cheerio';
 import { canonicalizeUrl } from '../lib/url.js';
+import { dayStartUtc } from '../lib/time.js';
 
 /**
  * Standard tags most news sites have. A schema entry's `selectors` override any of these (D19).
  * A selector is either a CSS string (use the element's text), { css, attr } (use an attribute), or
  * { jsonld: 'datePublished' } (a key of the page's JSON-LD metadata, D66).
+ * The publishedDate selector may add `dayZone: 'ET'` for a site that states only the day (D69).
  */
 const DEFAULT_SELECTORS = {
   canonical: { css: 'link[rel="canonical"]', attr: 'href' },
@@ -31,16 +33,18 @@ const TEXT_MAX = 500; // R-A7
 export function extractHtml(html, item, entry, finalUrl) {
   const sel = { ...DEFAULT_SELECTORS, ...entry.selectors };
   const $ = cheerio.load(html);
+  const pageDate = toPageDate(pick($, sel.publishedDate), sel.publishedDate?.dayZone);
 
   const canonical = pick($, sel.canonical);
   const fullText = readBody($, sel);
 
   return {
-    url: canonicalizeUrl(canonical || finalUrl || item.url, finalUrl || item.url),
+    url: articleUrl(canonical || finalUrl || item.url, item.url, finalUrl),
     title: clean(pick($, sel.title)) || item.title,
     // The page's image first; else the list's (a sitemap's <image:loc>), e.g. when the page was blocked.
     image: absolute(pick($, sel.image), finalUrl || item.url) ?? item.image ?? null,
-    publishedDate: toIso(pick($, sel.publishedDate)) || item.publishedDate,
+    publishedDate: pageDate.iso || item.publishedDate,
+    ...(pageDate.iso && pageDate.day ? { publishedDatePrecision: 'day' } : {}),
     // The publisher's own summary first, never a guess (D32): feed/API description → page meta description
     // → first paragraph of the body. If none exists, text is "".
     text: truncate(stripHtml(item.description) || stripHtml(pick($, sel.description)) || firstParagraph(fullText)),
@@ -146,10 +150,35 @@ function truncate(s) {
   return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut) + '…';
 }
 
-function toIso(value) {
-  if (!value) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+/**
+ * The page's date → { iso, day }. A date-time must carry its zone or offset (else JavaScript would read
+ * it in the machine's own zone). A bare day ("2026-11-27") is used only if the schema names the zone
+ * the site's days are in (`dayZone`): 00:00 of that day there, flagged `day` (D69). Anything else → null.
+ */
+function toPageDate(value, dayZone) {
+  if (!value) return { iso: null, day: false };
+  const v = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return { iso: dayZone ? dayStartUtc(v, dayZone) : null, day: true };
+  if (!/(Z|[+-]\d{2}:?\d{2}|\b(?:UTC|GMT))$/i.test(v)) return { iso: null, day: false };
+  const d = new Date(v);
+  return { iso: Number.isNaN(d.getTime()) ? null : d.toISOString(), day: false };
+}
+
+/**
+ * The article's URL: the page's canonical (or the URL after redirects), unless that is the site's
+ * homepage while we asked for an article. Some sites send a removed article to "/"; the record then keeps
+ * the URL we asked for, so the stats show which article it was, not "https://site/" ten times.
+ */
+function articleUrl(candidate, requested, finalUrl) {
+  const isRoot = (u) => {
+    try {
+      return new URL(u, requested).pathname === '/';
+    } catch {
+      return false;
+    }
+  };
+  const chosen = isRoot(candidate) && !isRoot(requested) ? requested : candidate;
+  return canonicalizeUrl(chosen, finalUrl || requested);
 }
 
 function absolute(url, base) {

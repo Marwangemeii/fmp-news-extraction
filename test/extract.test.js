@@ -51,3 +51,22 @@ test('publishedDate from JSON-LD (D66): first block with the key, inside @graph,
   const none = extractHtml('<html><body><article><p>x</p></article></body></html>', { ...item, publishedDate: '2026-11-20T00:00:00.000Z' }, e, item.url);
   assert.equal(none.publishedDate, '2026-11-20T00:00:00.000Z');
 });
+
+test('page dates (D69): a date-time needs its zone; a bare day only with the schema dayZone, flagged', () => {
+  const page = (v) => `<html><head><meta property="article:published_time" content="${v}"></head><body><article><p>x</p></article></body></html>`;
+  const at = (v, sel) => extractHtml(page(v), item, { selectors: sel ?? {} }, item.url);
+  assert.equal(at('2026-11-27T10:00:00-05:00').publishedDate, '2026-11-27T15:00:00.000Z');
+  assert.equal(at('2026-11-27T10:00:00').publishedDate, null); // no zone: not read in the machine's zone
+  assert.equal(at('2026-11-27').publishedDate, null); // a bare day, no dayZone in the schema
+  const day = at('2026-11-27', { publishedDate: { css: 'meta[property="article:published_time"]', attr: 'content', dayZone: 'ET' } });
+  assert.equal(day.publishedDate, '2026-11-27T05:00:00.000Z'); // 00:00 New York (EST) in UTC
+  assert.equal(day.publishedDatePrecision, 'day');
+  assert.equal(at('2026-11-27T10:00:00Z').publishedDatePrecision, undefined);
+});
+
+test('a removed article redirected to the homepage keeps the URL we asked for', () => {
+  const home = '<html><head><link rel="canonical" href="https://news.test/"></head><body><p>Home</p></body></html>';
+  const out = extractHtml(home, { ...item, url: 'https://news.test/stock/news/123/gone' }, { selectors: {} }, 'https://news.test/');
+  assert.equal(out.url, 'https://news.test/stock/news/123/gone');
+  assert.equal(out.fullText, null);
+});

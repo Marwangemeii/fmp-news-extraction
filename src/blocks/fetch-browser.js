@@ -7,7 +7,7 @@
  * - One browser context (cookie jar) + one tab per schema entry, so a site's challenge cookie is kept
  *   for its next pages, and sites never share cookies.
  * - Same politeness as the HTTP fetcher: `delayMs` before every request, a timeout, retries with backoff.
- * - Returns the rendered HTML (`page.content()`). For XML or JSON sources, use the http fetcher.
+ * - Returns the rendered HTML (`page.content()`); for an XML or JSON response, the server's own body (D69).
  */
 import { chromium } from 'playwright';
 import { blockReason } from '../lib/blocked.js';
@@ -97,7 +97,13 @@ export async function fetchBrowser(url, entry = {}, opts = {}) {
       }
 
       if (!body) throw new Error(`no page content after ${CHALLENGE_WAIT_MS / 1000} s`); // caught below: retried
-      if (!blocked && status < 400) return { url: tab.page.url(), body };
+      if (!blocked && status < 400) {
+        // An XML or JSON response (a sitemap behind a JavaScript challenge, D69): Chromium shows it in its
+        // XML viewer, so page.content() is viewer HTML. Return the server's own body instead.
+        const type = tab.last?.headers()['content-type'] ?? '';
+        if (/xml|json/i.test(type)) body = (await tab.last.text().catch(() => null)) ?? body;
+        return { url: tab.page.url(), body };
+      }
 
       lastError = new Error(`${blocked ?? `HTTP ${status}`} for ${url} (browser)`);
       lastError.status = status;

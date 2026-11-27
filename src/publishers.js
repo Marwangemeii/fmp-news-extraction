@@ -266,7 +266,34 @@ const ENTRIES = [
   {
     name: 'Zacks',
     site: 'zacks.com',
-    startUrls: ['https://www.zacks.com/articles/index.php', 'https://www.zacks.com/stock/news'],
+    enabled: true,
+    // Imperva answers plain HTTP with its "Pardon Our Interruption" JavaScript challenge (200) on every page;
+    // in the browser it clears on the session's first page (~50 s), then pages load (D65).
+    fetcher: { list: 'browser', article: 'browser' },
+    delayMs: 2000,
+    startUrls: [
+      // The given pages (R-D2): "Most Recent Articles" (10 items; its paging returns nothing past page 1)
+      // and /stock/news (403 every time).
+      { url: 'https://www.zacks.com/articles/index.php', discover: 'html-list', paging: null, list: { item: '.listitem', link: 'h1 a' } },
+      { url: 'https://www.zacks.com/stock/news', discover: 'html-list', paging: null, list: { item: '.listitem', link: 'h1 a' } },
+      // Added route (D69), from robots.txt: the Google News sitemap, the newest 500 articles (~1.5 days).
+      // Its publication_date is a bare day, so it gives no list date; the page's date decides.
+      { url: 'https://www.zacks.com/news_all_articles_sitemap.xml', discover: 'sitemap', paging: null },
+    ],
+    selectors: {
+      body: '#comtext, #reserach_daily', // articles; "Research Daily" pages (sic, the site's own id)
+      // Zacks states only the day ("datePublished": "2026-11-27"), never a time: 00:00 of that day in New
+      // York time, flagged as day precision in the trace, stats and validator (D69, Marwan's decision).
+      publishedDate: { jsonld: 'datePublished', dayZone: 'ET' },
+      remove: [
+        'button', // "IREN Quick Quote" next to every ticker
+        '.third_para_ad_commentary',
+        '.inline_top_ad_commentary',
+        '.inline_bottom_ad_commentary',
+        '.cta_section',
+        'p:contains("Image Source: Zacks Investment Research")', // chart captions
+      ],
+    },
   },
   {
     name: 'Business Wire',
@@ -295,7 +322,10 @@ const ENTRIES = [
     name: 'Reuters',
     site: 'reuters.com',
     startUrls: ['https://www.reuters.com/business/', 'https://www.reuters.com/markets/'],
-    // enabled: false via DEFAULTS. No discover/selectors yet; configured in Phase 4.
+    // Not collected (D70, Marwan's decision): robots.txt disallows everything for every other crawler and
+    // says automated collection needs Reuters' prior written consent; pages answer 401 (DataDome).
+    enabled: false,
+    disabledReason: "robots.txt disallows all paths and its notice prohibits automated collection without Reuters' written consent (D70); production: a licensed Reuters feed",
   },
 ];
 

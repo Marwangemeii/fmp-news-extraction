@@ -187,8 +187,11 @@ Template for each site:
   - `/articles/index.php` (browser): "Most Recent Articles", **10 items** (`.listitem`, link `h1 a`, date `time` "Published on November 27,2026"). Its paging links (`?page=2…4`) and the infinite-scroll endpoint `?page=N&type=json` return **no items** for every page after 1 (checked 2, 5, 10, 50, 60).
   - `/stock/news` (browser): **403** every time (also after the challenge cleared for the session).
   - robots.txt sitemaps: `news_all_articles_sitemap.xml` (Google News, **500 URLs = ~1.5 days**, `news:publication_date` **date only**, "2026-11-27"), `all_articles_sitemap.xml` (the same 500, `lastmod` date only, `image:loc`), `all_articles_pf_sitemap.xml` (380 personal-finance URLs back to 2024). `?page=2` is ignored; `/sitemap.xml`, `/sitemap_index.xml`, `/rss/` 404; `/rss/rss_news.php` = the challenge; `/sitemap.php` is an HTML site map.
-- **Publish time:** **none anywhere.** Article page: JSON-LD `"datePublished": "2026-11-27"`, `<time datetime="00:00">November 27, 2026`; `meta name="date"` / `last-modified` = the time the page was generated (= now), not the publish time. R-A1 asks for the real publish time: **decision pending (Marwan).**
+- **Publish time:** **none anywhere.** Article page: JSON-LD `"datePublished": "2026-11-27"`, `<time datetime="00:00">November 27, 2026`; `meta name="date"` / `last-modified` = the time the page was generated (= now), not the publish time. R-A1 asks for the real publish time. **Decision (Marwan, D69):** written with the day at 00:00 New York time, flagged as day precision (trace, `stats.dayOnlyDates`, validator R-A1 warning).
 - **Selectors (verified on 1 article):** body `#comtext` (`.commentary_body`); og:title, og:image, canonical clean. Clean-up candidates: `button` ("Quick Quote"), `.third_para_ad_commentary`, `.inline_top_ad_commentary`, `.inline_bottom_ad_commentary`, `.cta_section`. "Key Takeaways" (`.key-points`) is article text.
+- **Configured (D69):** sources `/articles/index.php` (browser, `.listitem` / `h1 a`), `/stock/news` (403, `page 1 failed`), `news_all_articles_sitemap.xml` (browser; the fetcher now returns the raw XML). Lists and articles through the browser, `delayMs` 2000. Body `#comtext, #reserach_daily` (the Research Daily layout, the site's spelling); date `{ jsonld: 'datePublished', dayZone: 'ET' }`; remove list as above plus `p:contains("Image Source: Zacks Investment Research")` (chart captions).
+- **Run (2026-11-27, sample 100 of 510):** 510 in window (the sitemap's 500 + the list's 10), `windowStartReached: false` (no list date: the window is not covered beyond ~1.5 days). 90 written, all with fullText (1 Research Daily page fixed by the grouped body selector), all `dayOnlyDates` (2026-11-26T05:00Z / 2026-11-27T05:00Z). **10 not written: the article redirects to the homepage**, also by id alone (`/stock/news/3036582/`): removed or premium pieces (~9% of the sitemap). The extractor now keeps the requested URL when a page's canonical is the site root, so they're listed by their own URL in `droppedNoDateUrls`. Newest (WAT, Nov 27) and oldest (quantum stocks, Nov 26) start at "Key Takeaways" and end at the last paragraph; 0 "Quick Quote" or caption lines left. Validate PASS (R-A1 day-only, R-D1, R-D2, R-D3 warnings). Labelled `--limit 10`: pre-filter 10/10, all `others` (analysis pieces), symbols XOM, PNW, HIG, BMY; $0.0061 ($0.00061/article). Discovery + 100 articles: 7 min.
+- **Production approach:** a route back 14 days needs Zacks' licensed content feed; the day-only dates stay a site limit.
 - **robots.txt:** `User-agent: *` disallows `/search/`, `/pr/`, `/article/stock/news/`, PDFs, registration; article paths `/stock/news/<id>/`, `/commentary/<id>/` allowed. `GPTBot` disallowed entirely (we're not GPTBot; noted).
 - **Blocking log:**
 
@@ -224,5 +227,13 @@ Template for each site:
 | 2026-11-27 | run: articles over HTTP + breaker | 5 × 403, rest not requested | as Benzinga (D61, D62) |
 
 ## 10. Reuters
-- **Start URLs:** /business/, /markets/
-- **Notes:** likely strong bot protection. Check for internal JSON APIs and sitemaps. **(hypothesis)**
+- **Start URLs:** `/business/`, `/markets/` (given). **Not collected** (D70, Marwan's decision): the entry is `enabled: false` with a `disabledReason`.
+- **robots.txt:** opens with "NOTICE: Collection of content, data and/or information from reuters.com through automated means is prohibited unless you have prior written consent from Reuters and may only be conducted for the purposes explicitly described in such permission." `User-agent: *` → `Allow: /plus/`, `Disallow: /`. Lists sitemaps (`arc/outboundfeeds/news-sitemap-index`, `sitemap-index`, …), all under the disallow.
+- **Protection:** DataDome: the given pages answer **401** with "Please enable JS and disable any ad blocker" and a `captcha-delivery.com` script.
+- **Production approach:** a licensed Reuters feed (Reuters/LSEG).
+- **Blocking log:**
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-27 | robots.txt, Node fetch, full Chrome headers | 200: legal notice + `User-agent: *` `Disallow: /` | probing stopped here |
+| 2026-11-27 | `/business/`, `/markets/` (the given URLs), same request | **401**, 774 bytes, DataDome captcha page | not collected (D70); no browser, sitemap or API attempt by design |

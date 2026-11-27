@@ -53,8 +53,9 @@ export async function runAll(publishers, { registry, window, limit, sample, cach
   const outs = await Promise.all(
     publishers.map(async (entry) => {
       if (!entry.enabled) {
-        console.log(`[skip] ${entry.name}: enabled: false (not configured yet)`);
-        stats[entry.name] = { enabled: false };
+        // `disabledReason` (schema): a publisher deliberately not collected, e.g. its terms forbid it (D70).
+        console.log(`[skip] ${entry.name}: ${entry.disabledReason ?? 'enabled: false (not configured yet)'}`);
+        stats[entry.name] = { enabled: false, ...(entry.disabledReason ? { reason: entry.disabledReason } : {}) };
         return null;
       }
       // Filled in as the run goes, so a publisher that fails midway still reports what it reached.
@@ -113,6 +114,7 @@ function newStats() {
     droppedNoDate: 0,
     droppedNoDateUrls: [],
     notFetchedAfterBlocks: 0, // articles not requested after BLOCKED_IN_A_ROW blocks in a row (D61)
+    dayOnlyDates: 0, // written with a day-only publish date: 00:00 of the stated day in the schema's dayZone (D69)
     oldestDate: null,
     windowStartReached: false,
     labels: Object.fromEntries(LABELS.map((l) => [l, 0])), // articles per label
@@ -294,6 +296,7 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
     if (seen.has(article.url)) continue;
     seen.add(article.url);
 
+    if (article.publishedDatePrecision === 'day') s.dayOnlyDates++;
     if (nullReason) {
       s.fullTextNull[nullReason]++;
       s.fullTextNullUrls.push({ url: article.url, reason: nullReason });
@@ -322,6 +325,7 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
   articles.forEach((article, i) => {
     const result = results[i];
     const trace = result.trace ?? null;
+    if (trace && article.publishedDatePrecision) trace.publishedDatePrecision = article.publishedDatePrecision; // D69
     records.push(toRecord(entry, article, result));
     if (trace) traces.push(trace);
     for (const l of result.labels) s.labels[l]++;
