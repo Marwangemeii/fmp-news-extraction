@@ -179,7 +179,7 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
 
   // 1. Discover: every source, paging back to the window start, deduplicated by canonical URL.
   const found = new Map();
-  for (const source of toSources(entry)) {
+  for (const source of toSources(entry, window)) {
     const discover = pick(registry, 'discoverers', source.discover);
     const fetchList = pick(registry, 'fetchers', source.fetcher); // a source may use its own fetcher (D55)
     let result;
@@ -197,6 +197,9 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
       discovered: result.items.length,
       oldestDate: result.oldestDate,
       reachedStart: result.reachedStart,
+      // A date slice (D60) is complete only if paging ran out of results ("empty page"). Any other stop
+      // (max pages, the site's result cap → "no new items", an error) leaves a hole in its days.
+      ...(source.slice ? { slice: source.slice, sliceComplete: result.stop === 'empty page' } : {}),
       ...(result.error ? { error: result.error } : {}),
     });
     s.pagesFetched += result.pages;
@@ -212,7 +215,11 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
   const dates = s.sources.map((x) => x.oldestDate).filter(Boolean).sort();
   s.oldestDate = dates[0] ?? null;
   // One source reaching the window start is enough: together the sources cover it (D30).
-  s.windowStartReached = s.sources.some((x) => x.reachedStart);
+  // Date slices (D60) cover the window only if every slice is complete; one incomplete slice = a hole.
+  const slices = s.sources.filter((x) => x.slice);
+  const incomplete = slices.filter((x) => !x.sliceComplete);
+  s.windowStartReached = incomplete.length === 0 && (s.sources.some((x) => x.reachedStart) || slices.length > 0);
+  for (const x of incomplete) console.error(`[${entry.name}] date slice ${x.slice.from}..${x.slice.to} incomplete (${x.pagingStop}): a hole in the window`);
   s.discovered = found.size;
 
   // 2. Window + limit. The list date may be a sitemap lastmod (D58), so the article page's own date

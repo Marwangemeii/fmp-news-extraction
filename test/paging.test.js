@@ -160,3 +160,19 @@ async function quietErrors(fn) {
     console.error = e;
   }
 }
+
+test('date-sliced source (D60): {from}/{to} slices of the window, newest first, last one cut at the run day', () => {
+  const entry = {
+    discover: 'html-list',
+    startUrls: [{ url: 'https://w.test/search/date/%5B{from}%20TO%20{to}%5D?pageSize=50', sliceDays: 3, paging: { param: 'page', maxPages: 100 } }],
+  };
+  const win = { start: new Date('2026-11-13T00:00:00Z'), end: new Date('2026-11-27T16:47:00Z') };
+  const sources = toSources(entry, win);
+  assert.deepEqual(sources.map((s) => `${s.slice.from}..${s.slice.to}`), [
+    '2026-11-25..2026-11-27', '2026-11-22..2026-11-24', '2026-11-19..2026-11-21', '2026-11-16..2026-11-18', '2026-11-13..2026-11-15',
+  ]);
+  assert.equal(sources[0].url, 'https://w.test/search/date/%5B2026-11-25%20TO%202026-11-27%5D?pageSize=50');
+  assert.equal(pageUrl(sources[0].url, 'page', 2), 'https://w.test/search/date/%5B2026-11-25%20TO%202026-11-27%5D?pageSize=50&page=2');
+  // Without a window (schema tests) the template stays one source.
+  assert.equal(toSources(entry).length, 1);
+});

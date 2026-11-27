@@ -24,6 +24,14 @@ Phase 4, session A: Newsfile, GlobeNewswire, Benzinga, in that order. For each: 
 - Tests: `test/discover-list.test.js` (new), `test/paging.test.js` (+3), `test/controller.test.js` (+1), `test/structure.test.js` (each source's fetcher must exist). **91 tests.**
 - Docs: DECISIONS D51–D59 (+ D31 closed), SITES (Newsfile; a CryptoPotato 403 note), GLOSSARY, CLAUDE.md commands.
 
+**Step 2 (GlobeNewswire):**
+- `src/lib/paging.js`: `toSources(entry, window)` expands **date-sliced sources** (`sliceDays`, `{from}`/`{to}` in the URL) via `sliceByDate()` (D60).
+- `src/controller.js`: per-slice `slice` + `sliceComplete` in stats; `windowStartReached` is false if any slice is incomplete.
+- `src/blocks/fetch-browser.js`: a 4xx block page no longer waits 20 s or retries (only uncleared challenges, 429 and 5xx are retried). Found on Benzinga: each 403 cost 75 s.
+- `src/publishers.js`: GlobeNewswire enabled: given URLs (one page each) + 3-day date slices; `remove` for the attachments list.
+- Tests: `test/paging.test.js` (+1 slices), `test/controller.test.js` (+1 incomplete slice). **93 tests.**
+- Docs: D57 updated, D60, SITES (GlobeNewswire).
+
 ## 3. How it works
 **Parallel publishers, one LLM limiter (`controller.js`):**
 ```js
@@ -60,6 +68,19 @@ One Chromium per run, one context + tab per entry (cookie jar keeps the WAF toke
   ],
   selectors: { body: 'article#release', publishedDate: null /* no date on the page: list date */, remove: [ … 6 rules ] } }
 ```
+**GlobeNewswire entry + date slices (D60):**
+```js
+startUrls: [
+  { url: 'https://www.globenewswire.com/en/search/date/24HOURS?pageSize=10&page=1', paging: null },
+  { url: 'https://www.globenewswire.com/en/search/subject/prs', paging: null },
+  { url: 'https://www.globenewswire.com/en/search/date/%5B{from}%20TO%20{to}%5D?pageSize=50',
+    sliceDays: 3, paging: { param: 'page', maxPages: 100 } },
+],
+discover: 'html-list',
+list: { item: '.recentNewsH li', link: '.mainLink a', date: '.date-source span:first-child', description: '.newsTxt' },
+// toSources(entry, window) → [2026-11-25 TO 2026-11-27], [2026-11-22 TO 2026-11-24], …, [2026-11-13 TO 2026-11-15]
+// a slice counts as complete only if its paging ends on "empty page"; otherwise windowStartReached = false
+```
 **Paging retry on a rate limit (`lib/paging.js`):**
 ```js
 const { body } = await fetchList(url, entry, { delayMs: source.delayMs });
@@ -77,12 +98,14 @@ found = discover(body, url, source);                  // throws { blocked, rateL
 - **D57** GlobeNewswire: `/en/search` despite robots.txt, all languages (Marwan).
 - **D58** `sitemap` discoverer; lastmod only as a list date; `droppedNoDate`.
 - **D59** rate-limited list pages: `blockedText`, per-source `delayMs`, 90 s pause × 3.
+- **D60** date-sliced sources (GlobeNewswire's search caps at 5,000 results).
 Numbering differs from the plan (it said D52 = GNW route, D53 = browser): dev switches and block detection got their own entries.
 
 ## 5. Deviations from the plan or the docs
 - **Newsfile needed a rate-limit fix the plan didn't foresee** (D59): its search stops answering after ~37 quick pages. Found because paging "ended" at Nov 21 with `windowStartReached: false`.
 - `mapLimit` was removed (nothing else used it); `createLimiter` replaces it.
 - Two browser-fetcher bugs found and fixed during the Newsfile run (empty body during the challenge reload; half-loaded page). See D55.
+- **GlobeNewswire needed date slices** (D60), not one paged search: the search caps at 5,000 results, and the window holds ~9,900 releases (more than the ~6,000 estimated at plan time).
 
 ## 6. Requirements covered
 - **R-D2/R-D3** (M + stats): Newsfile given URLs kept, `windowStartReached: true`, oldest 2026-11-12T22:55Z.
@@ -107,11 +130,21 @@ $env:LABEL=''; $env:LLM_BUDGET_USD='0.3'; npm start -- --only Newsfile --limit 1
 - Labelled `--limit 10`: pre-filter passed 8/10, labels earnings 2 (Trans Mountain Q3, EN + FR), others 8, K4/K11 drops 0, LLM errors 0, **$0.0087** (10 calls). Symbols with FMP suffixes: `BEZ.AX`, `PCD-UN.TO`, `ENSG`, `AMD`.
 - **Full-run LLM estimate for Newsfile:** 2,068 × ~$0.00087 ≈ **$1.8** (wire pre-filter pass rate 80% here vs 43% on news sites).
 
+**GlobeNewswire (2026-11-27):**
+- Sources: 24HOURS 10, subject/prs 10, 5 date slices all **complete** (35/46/39/69/19 pages; 1,649 / 2,189 / 1,847 / 3,323 / 874 releases). **Discovered 9,882, in window 9,882**, `windowStartReached: true`. Discovery ~210 pages, ~6 min, no blocking.
+- Sample 100: 100 written, 0 fullText null, 0 errors; 84–43,646 chars (median 5,667); en 92, fr 5, da 1, de 1, ko 1. Spot-checked newest (Vallourec, ResearchAndMarkets) and oldest (TEMAI, Condor Q3): clean. Attachment lists removed after the check (12 of 100 changed).
+- Validate PASS (warnings: sample, LABEL).
+- Labelled `--limit 10` (Thanksgiving Friday's newest): pre-filter 4/10, all `others`, 0 errors, **$0.0016**.
+- **Full-run LLM estimate for GlobeNewswire:** the two samples disagree (Newsfile $0.00087/article, GNW $0.00016/article on a holiday). With Phase 3's measured unit costs (classify ~$0.00032, extract ~$0.0009) and an assumed 55% pre-filter pass and 15% labelled: 9,882 × (0.55 × 0.00032 + 0.15 × 0.0009) ≈ **$3.1** (range ~$1.6–8.6 for the two samples' rates). **This is the biggest single cost of Phase 5.**
+
 ## 9. Known issues / open questions for the orchestrator
 1. **French releases** (Newsfile feed, GlobeNewswire): the French Trans Mountain release got `earnings` with a French evidence sentence; prompts are English. Fine by the rules (evidence is verbatim), but worth a look in Phase 5.
 2. **Newsfile's search list may be English-only** (its form carries a hidden `l=en`); French releases beyond the feed's 2 hours may be missing. Check in Phase 5 (`/search?k=&l=fr`?).
 3. **Full-run time:** Newsfile ~1.5–2 h of article fetches through the browser.
 4. CryptoPotato: an uncached article page returned 403 from the usual network too (not only the hotspot). The browser fetcher may fix it; not tried (out of scope).
 
+5. **LLM budget for Phase 5:** GlobeNewswire alone is ~9,900 articles (~$3, maybe more on earnings-heavy days). Newsfile ~$1.8. Before the full run, decide whether to measure a `--sample 100` labelled run per wire first (~$0.03–0.09 each) to pin the rate.
+6. GlobeNewswire's busiest 3-day slice was 3,323 of a 5,000 cap; an earnings peak could exceed it. The run would show it (`sliceComplete: false`, `windowStartReached: false`); the fix is `sliceDays: 2`.
+
 ## 10. Suggested next step
-GlobeNewswire (configured; html-list over HTTP), then Benzinga (sitemaps + browser; its articles load with a normal Chrome UA).
+Benzinga (sitemaps + browser): see the Benzinga section once done.

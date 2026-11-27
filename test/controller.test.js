@@ -150,3 +150,30 @@ test('--sample in a run: processed counts the sample, inWindow the full list', a
   assert.equal(stats.Fake.inWindow, 5);
   assert.equal(stats.Fake.processed, 2);
 });
+
+test('date slices (D60): the window counts as covered only if every slice ran out of results', async () => {
+  const reg = {
+    ...registry,
+    fetchers: {
+      fake: async (url) => ({ url, body: url }),
+    },
+    discoverers: {
+      // Slice 2026-11-19..21 never runs out (a result cap): pages keep repeating → "no new items".
+      sliced: (body) => {
+        const u = new URL(body);
+        const page = Number(u.searchParams.get('page') ?? 1);
+        if (body.includes('2026-11-19') ) return [{ url: 'https://news.test/same', publishedDate: date }];
+        return page === 1 ? [{ url: `https://news.test/${u.pathname.split('/').pop()}`, publishedDate: date }] : [];
+      },
+    },
+  };
+  const e = {
+    ...entry, discover: 'sliced', fetcher: { list: 'fake', article: 'fake' },
+    startUrls: [{ url: 'https://news.test/s/{from}_{to}', sliceDays: 3, paging: { param: 'page', maxPages: 5 } }],
+  };
+  const { stats } = await quiet(() => runAll([e], { registry: reg, window, sample: 1 }));
+  const s = stats.Fake;
+  assert.equal(s.sources.length, 5); // Nov 10 → Nov 24 in 3-day slices
+  assert.deepEqual(s.sources.filter((x) => !x.sliceComplete).map((x) => x.slice.from), ['2026-11-19']);
+  assert.equal(s.windowStartReached, false);
+});

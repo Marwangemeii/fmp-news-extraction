@@ -16,12 +16,14 @@
 /**
  * @param {{ startUrls: (string | object)[], discover?: string, paging?: Paging | null,
  *           fetcher?: { list?: string }, list?: object }} entry
+ * @param {{ start: Date, end: Date }} [window] needed to expand date-sliced sources (D60); without it
+ *   (e.g. in the schema tests) a sliced source stays one source with its URL template
  * @returns {Source[]}
  */
-export function toSources(entry) {
-  return entry.startUrls.map((s) => {
+export function toSources(entry, window) {
+  return entry.startUrls.flatMap((s) => {
     const src = typeof s === 'string' ? { url: s } : s;
-    return {
+    const source = {
       url: src.url,
       discover: src.discover ?? entry.discover,
       // `in`, not `??`: an explicit `paging: null` on a source means "one page only",
@@ -31,7 +33,29 @@ export function toSources(entry) {
       list: src.list ?? entry.list ?? null,
       ...(src.delayMs ? { delayMs: src.delayMs } : {}), // slower pacing for this source's list pages (D59)
     };
+    return src.sliceDays && window ? sliceByDate(source, src.sliceDays, window) : [source];
   });
+}
+
+const DAY_MS = 86_400_000;
+const ymd = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * A date-sliced source (D60): its URL has `{from}` and `{to}` (YYYY-MM-DD, UTC days, both inclusive),
+ * and it becomes one source per `days`-long slice of the window, newest slice first. For a site whose
+ * search returns at most N results: each slice stays under N, and together they cover the window.
+ *   '…/date/%5B{from}%20TO%20{to}%5D', sliceDays 3, window Nov 13 → Nov 27
+ *   → [2026-11-25 TO 2026-11-27], [2026-11-22 TO 2026-11-24], …, [2026-11-13 TO 2026-11-15]
+ */
+export function sliceByDate(source, days, window) {
+  const first = Date.parse(ymd(window.start.getTime())); // 00:00 UTC of the first day
+  const last = Date.parse(ymd(window.end.getTime()));
+  const slices = [];
+  for (let from = first; from <= last; from += days * DAY_MS) {
+    const to = Math.min(from + (days - 1) * DAY_MS, last);
+    slices.push({ ...source, url: source.url.replace('{from}', ymd(from)).replace('{to}', ymd(to)), slice: { from: ymd(from), to: ymd(to) } });
+  }
+  return slices.reverse();
 }
 
 /**

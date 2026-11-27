@@ -35,14 +35,27 @@ Template for each site:
 - **Blocking log:** none, no blocking seen.
 
 ## 2. GlobeNewswire
-- **Start URLs:** `/en/search/date/24HOURS?pageSize=10&page=1`, `/en/search/subject/prs`
-- **Notes:** the start URL only covers 24 hours, so a different route is needed for 14 days (paging the subject search, or a date-range search). **(hypothesis)**
-- **Found in Phase 3 (fetching eval fixtures, 2026-11-25):**
-  - Node's `fetch` (our `fetchHttp`, Chrome User-Agent) gets **200** on search pages, the RSS feed and article pages. **curl gets 403** "Access Denied" from Akamai (`errors.edgesuite.net`) on the same URLs with the same User-Agent, so the block is on the client fingerprint, not the headers.
-  - Keyword search works: `/en/search/keyword/<words>?pageSize=20` lists releases newest first (links `a[href*="/news-release/"]`). Quoted phrases narrow it.
-  - RSS: `/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies` → 200.
-  - **Article selectors:** body `[itemprop="articleBody"]`; publish time `meta[property="og:article:published_time"]` (not `article:published_time`, so the default selector misses it); og:title/og:image/canonical present. Datelines look like `NEW YORK, Nov. 24, 2026 (GLOBE NEWSWIRE) --`.
-  - Tables come out as `a | b | c` rows, and financial tables are often "in thousands" (D37).
+- **Start URLs:** `/en/search/date/24HOURS?pageSize=10&page=1` and `/en/search/subject/prs` (given, fetched exactly as written, one page each), plus the added `/en/search/date/%5B{from}%20TO%20{to}%5D?pageSize=50` in 3-day slices of the window (D57, D60).
+- **Discovery route:** HTML search pages (`html-list`): item `.recentNewsH li`, link `.mainLink a`, date `.date-source span:first-child` ("November 27, 2026 10:30 ET"), description `.newsTxt`. 50 per page is the maximum (`pageSize=100` gives 50).
+- **Limits found (2026-11-27):**
+  - `24HOURS` = 24 hours; `7DAYS` = 7 days; `1MONTH` exists; `30DAYS` and `/date/2026-11-13` give 0 results.
+  - **The search returns at most 5,000 results:** `/en/search?pageSize=50` page 100 = 2026-11-19 06:00 ET, page 101 = repeats (paging stopped "no new items" at 2026-11-19T11:53Z).
+  - **Custom range** `date/[2026-11-13 TO 2026-11-20]` works (the facet's `RouteValue` is `[]`), in UTC days, both ends inclusive (first result 18:59 ET = 23:59Z on the end day). Past the last page: 0 results.
+  - The sitemaps don't cover the window: `sitemaps.globenewswire.com/news/en/2026-11.xml` is empty until the month ends (October's has 13,091 English URLs), `news/en/latest.xml` = 214 URLs (~1 day, no dates), `/NewsRoom/GoogleSitemap` = 1,000 URLs (2 days).
+  - **robots.txt disallows `/en/search`** (and `/search`, `/fr/search`, `/de/search`), the path of FMP's given start URLs. Marwan's decision: use it, as FMP gave these URLs; 1 request a second, one at a time (D57).
+- **Covering 14 days (2026-11-27, window from 2026-11-13T00:00Z):** 5 slices, all complete ("empty page"): Nov 25–27 35 pages / 1,649; Nov 22–24 46 / 2,189; Nov 19–21 39 / 1,847; Nov 16–18 69 / 3,323; Nov 13–15 19 / 874 (weekend). **9,882 discovered = 9,882 in window**, oldest 2026-11-13T00:00Z, `windowStartReached: true`. Discovery ~210 pages, ~6 min.
+- **Fetcher:** http for lists and articles (Node fetch 200; curl 403, Akamai).
+- **Selectors:** body `[itemprop="articleBody"]`; date `meta[property="og:article:published_time"]` ("2026-11-27T15:20:00Z"); og:title, og:image, canonical present.
+- **Clean-up:** `#gnw_attachments_section-header`, `#gnw_attachments_section-items` (the "Attachment" heading and file list; 12 of 100 sampled releases changed). Contacts, tags and logos are outside `articleBody`.
+- **Spot-check (sample of 100 spread over the window):** 100/100 with fullText, 0 errors; length 84–43,646 chars (median 5,667; the 84-char one is a one-sentence release: "Danske Mortgage Bank Plc will publish the annual report for 2026 on 4 February 2027."). Newest (Vallourec voting rights, ResearchAndMarkets report) and oldest (TEMAI at SEMA; Condor Q3, 43,646 chars, 148 paragraphs) start at the dateline and end at the contact/disclaimer. 29 of 100 contain tables (`a | b` rows). 9 have no og:image. Languages in the sample: en 92, fr 5, da 1, de 1, ko 1.
+- **Blocking log:**
+
+| Date | What we tried | What we saw (status, page content) | Result |
+|---|---|---|---|
+| 2026-11-25 | curl, Chrome UA | 403 "Access Denied" (Akamai, `errors.edgesuite.net`) | the block is on the client fingerprint |
+| 2026-11-25 | Node fetch (`fetchHttp`), same UA | 200 on search, RSS, articles | used |
+| 2026-11-27 | `/en/search?pageSize=50&page=101` | 200, repeats earlier results | 5,000-result cap → date slices (D60) |
+| 2026-11-27 | ~210 list pages + 100 articles in 8 min, 1 request at a time | all 200 | no blocking seen |
 
 ## 3. Fox Business
 - **Start URLs:** /markets, /category/stocks

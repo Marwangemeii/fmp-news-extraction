@@ -51,16 +51,21 @@ const ENTRIES = [
   {
     name: 'GlobeNewswire',
     site: 'globenewswire.com',
-    enabled: false, // configured, verified in its own commit (Phase 4)
+    enabled: true,
     defaultType: 'pressReleases', // a wire: companies' own announcements (D47)
     // Node's fetch gets 200 here; curl gets an Akamai 403 (it's the client fingerprint, not the headers).
     startUrls: [
       // The given URLs (R-D2), fetched exactly as written: 10 releases of the last 24 hours, and a subject page.
       { url: 'https://www.globenewswire.com/en/search/date/24HOURS?pageSize=10&page=1', paging: null },
       { url: 'https://www.globenewswire.com/en/search/subject/prs', paging: null },
-      // Added route (D57): the same search with no filter lists every release (all languages), newest first.
-      // 50 per page is the site's maximum; ~130 pages cover 14 days. The sitemaps don't cover the window.
-      { url: 'https://www.globenewswire.com/en/search?pageSize=50', paging: { param: 'page', maxPages: 250 } },
+      // Added route (D57, D60): the same search filtered to a date range lists every release (all languages),
+      // newest first, 50 per page (the site's maximum). The search returns at most 5,000 results (100 pages),
+      // and 14 days are ~8,000+, so the window is cut into 3-day slices (~1,500–3,300 each).
+      {
+        url: 'https://www.globenewswire.com/en/search/date/%5B{from}%20TO%20{to}%5D?pageSize=50',
+        sliceDays: 3,
+        paging: { param: 'page', maxPages: 100 },
+      },
     ],
     discover: 'html-list',
     list: {
@@ -72,6 +77,10 @@ const ENTRIES = [
     selectors: {
       body: '[itemprop="articleBody"]', // only the release text; tags and contacts are outside it
       publishedDate: { css: 'meta[property="og:article:published_time"]', attr: 'content' }, // "2026-11-27T15:20:00Z"
+      remove: [
+        '#gnw_attachments_section-header', // "Attachment" heading (22 of 100 sampled releases)
+        '#gnw_attachments_section-items', // its list of attached file names
+      ],
     },
   },
   {

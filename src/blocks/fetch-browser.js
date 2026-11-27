@@ -10,7 +10,7 @@
  * - Returns the rendered HTML (`page.content()`). For XML or JSON sources, use the http fetcher.
  */
 import { chromium } from 'playwright';
-import { blockReason, BLOCKED_STATUSES } from '../lib/blocked.js';
+import { blockReason } from '../lib/blocked.js';
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -80,8 +80,10 @@ export async function fetchBrowser(url, entry = {}, opts = {}) {
         blocked = body ? blockReason({ status, headers: headersOf(tab.last), body }) : null;
       };
       const deadline = Date.now() + CHALLENGE_WAIT_MS;
+      // Only a challenge (served with 2xx) can solve itself; a 4xx block page ("you have been blocked") won't.
+      const mayClear = () => !body || (blocked && status < 400);
       await read();
-      while ((blocked || !body) && Date.now() < deadline) {
+      while (mayClear() && Date.now() < deadline) {
         waited = true;
         await sleep(500);
         await read();
@@ -99,8 +101,10 @@ export async function fetchBrowser(url, entry = {}, opts = {}) {
       lastError = new Error(`${blocked ?? `HTTP ${status}`} for ${url} (browser)`);
       lastError.status = status;
       if (blocked) lastError.blocked = true;
-      // A 404 won't change on retry; a block might after a longer pause (D13 step 4).
-      if (!blocked && !BLOCKED_STATUSES.includes(status) && status < 500) break;
+      // Retry only what can change seconds later: a challenge that didn't clear in time, 429, 5xx.
+      // A 403 block or a 404 won't; a block is retried at another time (D13 step 4), not hammered now.
+      const unclearedChallenge = blocked && status < 400;
+      if (!unclearedChallenge && status !== 429 && status < 500) break;
     } catch (err) {
       lastError = new Error(`${err.name}: ${err.message.split('\n')[0]} for ${url} (browser)`);
     }
