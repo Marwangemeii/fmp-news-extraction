@@ -5,6 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runAll, spreadSample } from '../src/controller.js';
 import { extractHtml } from '../src/blocks/extract-html.js';
+import { createHash } from 'node:crypto';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const window = { start: new Date('2026-11-10T00:00:00Z'), end: new Date('2026-11-24T12:00:00Z') };
 const date = '2026-11-20T10:00:00.000Z';
@@ -222,6 +225,42 @@ test('circuit breaker (D61): after 5 blocked articles in a row, the rest are wri
   assert.equal(s.notFetchedAfterBlocks, 3);
   assert.equal(records.length, 8); // every article still written
   assert.equal(s.fullTextNull.blocked, 8);
+});
+
+test('circuit breaker (D61): a page already in the dev cache is still used (no request is made)', async () => {
+  const requested = [];
+  const cachedUrl = 'https://news.test/breaker-cache-test-a6';
+  // The dev cache's own file name for this URL (src/lib/cache.js); removed in `finally`.
+  const file = join('.cache', `${createHash('sha1').update(cachedUrl).digest('hex')}.json`);
+  await mkdir('.cache', { recursive: true });
+  await writeFile(file, JSON.stringify({ url: cachedUrl, body: '<article><p>Text from the cache.</p></article>' }));
+  try {
+    const reg = {
+      ...registry,
+      fetchers: {
+        fake: async (url) => {
+          if (url === 'https://news.test/many') return { url, body: '' };
+          requested.push(url);
+          throw Object.assign(new Error('HTTP 403'), { status: 403, blocked: true });
+        },
+      },
+      discoverers: {
+        many: () => Array.from({ length: 8 }, (_, i) => ({
+          url: i === 6 ? cachedUrl : `https://news.test/b${i}`, title: `B${i}`, publishedDate: date, description: null,
+        })),
+      },
+    };
+    const e = { ...entry, startUrls: ['https://news.test/many'], discover: 'many' };
+    const { records, stats } = await quiet(() => runAll([e], { registry: reg, window, cache: true }));
+    const s = stats.Fake;
+    assert.equal(requested.length, 5); // the breaker still stops requests after 5
+    assert.equal(s.notFetchedAfterBlocks, 2); // b5 and b7: not cached, not requested
+    assert.equal(s.fromCache, 1);
+    assert.equal(records.find((r) => r.url === cachedUrl).fullText, 'Text from the cache.');
+    assert.equal(s.fullTextNull.blocked, 7);
+  } finally {
+    await rm(file, { force: true });
+  }
 });
 
 test('two sources list the same URL: the later one fills what the earlier lacked (a date), never overwrites', async () => {

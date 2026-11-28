@@ -152,6 +152,7 @@ Template for each site:
 | 2026-11-27 | `--sample 5` run (Phase 4 step 0 check), 1 new article page | **403** again (`/monero-xmr-drops-15-daily-heres-the-reason/`) | not only the hotspot: try the browser fetcher for CryptoPotato articles in Phase 5 |
 | 2026-11-27 (session B) | 3 recent feed articles not in `.cache/`, http fetcher (Chrome UA), usual network | **403 on all 3**: Cloudflare managed challenge, `cf-mitigated: challenge`, `<title>Just a moment...` (5,974 bytes); feed still 200 | articles now challenged for plain HTTP from this network, not only the hotspot |
 | 2026-11-27 (session B) | 2 of them in the browser fetcher; then with a test change that waits on a 403 challenge (3 × 20 s) | 403 in 2.5 s; with waiting: still the challenge after 75 s | headless Chromium doesn't pass this challenge (as on Benzinga, D62); change reverted (D63). Phase 5: ~235 pages are in `.cache/`; uncached ones will be `blocked`. Production: FMP's proxy (`PROXY_URL`, D63) |
+| 2026-11-28 (Phase 5 fetch run, `CACHE=1`) | full run; the 5 newest articles (not cached) requested | **403** on all 5 → breaker (D61) → the other 243 written `blocked`, **`from cache 0`**: the breaker skipped the cache too | bug, fixed (D72): the breaker now still reads `.cache/`. 186 of the 248 in-window articles (Nov 14–24) are cached → text in the next cached run; 62 (Nov 24–28) stay `blocked` |
 
 ## 7. Newsfile
 - **Start URLs:** `https://feeds.newsfilecorp.com/global/Last25Stories` (given), `https://www.newsfilecorp.com/` (given), plus the added `https://www.newsfilecorp.com/search?k=` (D56).
@@ -237,3 +238,25 @@ Template for each site:
 |---|---|---|---|
 | 2026-11-27 | robots.txt, Node fetch, full Chrome headers | 200: legal notice + `User-agent: *` `Disallow: /` | probing stopped here |
 | 2026-11-27 | `/business/`, `/markets/` (the given URLs), same request | **401**, 774 bytes, DataDome captcha page | not collected (D70); no browser, sitemap or API attempt by design |
+
+---
+
+## Phase 5: full fetch run (2026-11-28)
+`CACHE=1 LABEL=placeholder npm start`, all enabled publishers in parallel, run at 2026-11-28T13:33Z, window **2026-11-14T00:00Z → run**. 16,172 s (4 h 30 min; GlobeNewswire is the critical path). Exit 0, no crash. **18,665 articles written**, `articles.jsonl` 91.2 MB (86.9 MiB). `npm run validate`: PASS, 0 failures (after the R-A5 entity check fix, see handoff 05), 13,055 warnings, all of known kinds.
+
+| Site | Discovered | In window | Written | fullText null (reason) | Not written | Window start reached | Oldest | Duration |
+|---|---|---|---|---|---|---|---|---|
+| TechCrunch | 300 | 210 | 210 | 0 | 0 | yes | 11-09 | 1 min |
+| GlobeNewswire | 9,253 | 9,253 | 9,253 | 0 | 0 (5 slices all complete) | yes | 11-14 00:10Z | 269 min |
+| Fox Business | 5,000 | 127 | 125 | 0 | 2 (page date outside window) | yes | (sitemap: 2025) | 1 min |
+| Investing.com | 142 | 142 | 141 | 141 blocked | 1 (no date, blocked) | **no** (11-24) | 11-24 | 1 min |
+| Benzinga | 10,000 | 2,608 | 256 | 256 blocked | 2,352 (no date, blocked) | yes | (lastmod 10-21) | <1 min |
+| CryptoPotato | 300 | 248 | 248 | 248 blocked (D72 bug) | 0 | yes | 11-10 | <1 min |
+| Newsfile | 2,006 | 1,993 | 1,988 | 0 | 0 counted (5 unexplained, see below) | yes | 11-13 22:18Z | 47 min |
+| Zacks | 510 | 510 | 445 (day-only dates) | 0 | 55 (45 noBody = removed → home, 10 no date) | **no** (~1.5 days) | – | 26 min |
+| Business Wire | 5,999 | 5,999 | 5,999 | 5,998 blocked, 1 noBody | 0 | yes | 11-14 00:18Z | 1 min |
+| Reuters | – | – | – | – | not collected (D70) | – | – | – |
+
+- **Blocked request counts** (`errors`): 5 each for Investing.com, Benzinga, CryptoPotato (then the breaker); 8 for Business Wire (the given `/newsroom` + 7 article pages; one article in between loaded with no body, `noBody` 1, which reset the breaker count); 1 for Zacks (the given `/stock/news`, 403). No other errors.
+- **Unexplained small gaps:** Newsfile in window 1,993 vs written 1,988, Zacks 510 vs 445 + 55: 5 and 10 articles not in any counter. Most likely the `seen` dedupe (two list URLs whose pages give the same canonical URL), which isn't counted. Not verified.
+- **Cache now holds** every fetched article page (GlobeNewswire 9,253, Newsfile 1,988, Zacks 445, Fox, TechCrunch), so the labelled run re-fetches only articles published since 13:33Z.

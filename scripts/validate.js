@@ -17,7 +17,9 @@ const KEYS = ['publishedDate', 'publisher', 'site', 'url', 'title', 'image', 'te
 const TYPES = ['stock', 'pressReleases', 'crypto', 'forex', 'general'];
 const LABELS = ['earnings', 'dividends', 'splits', 'ipos', 'others'];
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
-const ENTITY = /&(amp|lt|gt|quot|apos|nbsp|#\d+|#x[0-9a-f]+|[a-z]+);/i;
+// An HTML entity left in the text: the common ones in any case, numeric ones, or any other named one
+// ("&rsquo;", "&Eacute;": a letter, then lowercase letters/digits). "MD&A; Q3 results" is text, not "&A;".
+const isEntity = (s) => /&(amp|lt|gt|quot|apos|nbsp|#\d+|#x[0-9a-f]+);/i.test(s) || /&[A-Za-z][a-z0-9]+;/.test(s);
 const siteByName = new Map(publishers.map((p) => [p.name, p.site]));
 
 /** Required event fields per category (REQUIREMENTS §5), split by kind for the R-E8/R-E9 checks. */
@@ -143,7 +145,7 @@ for (const { line, record: r, error } of rows) {
 
   // R-A5: title
   if (typeof r.title !== 'string' || !r.title.trim()) fail('R-A5', 'title missing');
-  else if (ENTITY.test(r.title)) fail('R-A5', `undecoded entity in title: ${r.title}`);
+  else if (isEntity(r.title)) fail('R-A5', `undecoded entity in title: ${r.title}`);
 
   // R-A6: image
   if (r.image !== null && !(typeof r.image === 'string' && /^https?:\/\//.test(r.image))) {

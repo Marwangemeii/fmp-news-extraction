@@ -9,6 +9,25 @@ import { join } from 'node:path';
 
 const DIR = '.cache';
 
+// sha1 of the URL: a safe, fixed-length file name for any URL.
+const fileOf = (url) => join(DIR, `${createHash('sha1').update(url).digest('hex')}.json`);
+
+/**
+ * The cached page for a URL, or null. No request is made, so the circuit breaker (D61) can still use it.
+ * @param {string} url
+ * @param {{ hits: number }} counter incremented on a hit (for stats.fromCache)
+ * @returns {Promise<{ url: string, body: string } | null>}
+ */
+export async function readCache(url, counter) {
+  try {
+    const page = JSON.parse(await readFile(fileOf(url), 'utf8'));
+    counter.hits++;
+    return page;
+  } catch {
+    return null; // not cached yet (or unreadable)
+  }
+}
+
 /**
  * @param {(url: string, entry: object) => Promise<{ url: string, body: string }>} fetcher
  * @param {{ hits: number }} counter incremented on every cache hit (for stats.fromCache)
@@ -16,15 +35,9 @@ const DIR = '.cache';
  */
 export function cached(fetcher, counter) {
   return async (url, entry) => {
-    // sha1 of the URL: a safe, fixed-length file name for any URL.
-    const file = join(DIR, `${createHash('sha1').update(url).digest('hex')}.json`);
-    try {
-      const page = JSON.parse(await readFile(file, 'utf8'));
-      counter.hits++;
-      return page;
-    } catch {
-      // Not cached yet (or unreadable): fetch it.
-    }
+    const hit = await readCache(url, counter);
+    if (hit) return hit;
+    const file = fileOf(url);
     const page = await fetcher(url, entry); // throws on failure, so failures are never cached
     await mkdir(DIR, { recursive: true });
     await writeFile(file, JSON.stringify({ url: page.url, body: page.body }), 'utf8');

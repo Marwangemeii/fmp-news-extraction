@@ -44,6 +44,10 @@ if (t.prefilter) {
   const hits = Object.entries(t.prefilter.matched).filter(([, w]) => w.length).map(([l, w]) => `${l}: ${w.join(', ')}`);
   console.log(`pre-filter  ${t.prefilter.pass ? 'PASS' : 'no match'}  ${hits.join(' · ')}`);
 }
+if (t.noticeRule) {
+  const r = t.noticeRule;
+  console.log(`rule        ${r.rule}: title "${r.litigation}", firm "${r.firm}" in the ${r.firmIn} → others, no LLM call`);
+}
 
 const stage = (name, s) => {
   if (!s) return;

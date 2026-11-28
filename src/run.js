@@ -97,7 +97,7 @@ console.log(`Wrote ${records.length} articles to ${OUTPUT} and ${traces.length} 
 const llm = newLlmStats();
 for (const s of Object.values(stats)) {
   if (!s.llm) continue;
-  for (const k of ['prefilterPassed', 'prefilterSkipped', 'calls', 'cacheHits', 'inputTokens', 'outputTokens', 'costUsd', 'labelsProposed', 'labelsDropped', 'labelsNotInOpening']) llm[k] += s.llm[k];
+  for (const k of ['prefilterPassed', 'prefilterSkipped', 'noticeRule', 'calls', 'cacheHits', 'inputTokens', 'outputTokens', 'costUsd', 'labelsProposed', 'labelsDropped', 'labelsNotInOpening']) llm[k] += s.llm[k];
   for (const [k, n] of Object.entries(s.llm.llmErrors)) llm.llmErrors[k] = (llm.llmErrors[k] ?? 0) + n;
   for (const [model, m] of Object.entries(s.llm.byModel)) {
     const t = (llm.byModel[model] ??= { calls: 0, cacheHits: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });
@@ -107,7 +107,7 @@ for (const s of Object.values(stats)) {
 llm.estimatedCostUsd = Number(llm.costUsd.toFixed(4));
 delete llm.costUsd;
 llm.labelDropRate = llm.labelsProposed ? Number((llm.labelsDropped / llm.labelsProposed).toFixed(3)) : 0;
-console.log(`LLM: ${llm.calls} calls (${llm.cacheHits} cached) · ${llm.inputTokens} in / ${llm.outputTokens} out · ~$${llm.estimatedCostUsd}` +
+console.log(`LLM: ${llm.noticeRule} law-firm notices skipped · ${llm.calls} calls (${llm.cacheHits} cached) · ${llm.inputTokens} in / ${llm.outputTokens} out · ~$${llm.estimatedCostUsd}` +
   ` · labels dropped: K4 ${llm.labelsDropped}, K11 ${llm.labelsNotInOpening}, of ${llm.labelsProposed} · errors ${JSON.stringify(llm.llmErrors)}`);
 
 // runAt is the window's end; the validator reads it from here (D26).

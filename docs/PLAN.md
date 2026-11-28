@@ -10,7 +10,7 @@ Work on one phase at a time. Each phase ends with a handoff file in `docs/handof
 | 2. Two easy sites, full window | Sun 22 | done (awaiting diff approval) |
 | 3. Labeller, extractor, traces | Mon 23 – Tue 24 | done (M1 + M2; M2 awaiting diff approval) |
 | 4. Remaining 8 sites | Wed 25 – Thu 26 | done (sessions A + B: every site covers the window or has a complete attempt log; Reuters not collected, D70; cost cuts proposed, not built) |
-| 5. Full run + quality check | Fri 27 | todo |
+| 5. Full run + quality check | Fri 27 | in progress (fetch run done + validated PASS, 18,665 articles; cost cut 1 built, D71; breaker/cache fix, D72; **labelled run pending: Marwan, Sat 28 night**) |
 | 6. README, methodology, rehearsal | Sat 28 | todo |
 | 7. Final run + submit | Sun 29 | todo |
 

@@ -1,7 +1,7 @@
 /**
  * The labeller (D8, D34): the LLM proposes, the code proves.
  *
- *   pre-filter → CLASSIFY (labels + the sentence proving each) → K4: sentence in fullText?
+ *   pre-filter → law-firm notice rule (D71) → CLASSIFY (labels + the sentence proving each) → K4: sentence in fullText?
  *              → EXTRACT (values as written + their sentences) → K1/K2 checks → convert → event
  *
  * Every step is written to `trace` (D9), one per article, so any output value can be traced
@@ -14,6 +14,7 @@ import { CLASSIFY_SYSTEM, EXTRACT_SYSTEM, topOfBody, classifyMessage, extractMes
 import { CLASSIFY_SCHEMA, EXTRACT_SCHEMA } from '../llm/schemas.js';
 import { callJson } from '../llm/client.js';
 import { prefilter } from '../lib/prefilter.js';
+import { lawFirmNotice, NOTICE_RULE } from '../lib/notice-rule.js';
 import { evidenceInText, evidenceInOpening, rawInEvidence, inArticleOrder } from '../lib/checks.js';
 import { parseMoney, parsePerShare, parseShares, parseDate, parseRatio, parsePeriod, parseFiscalYear, asText } from '../lib/convert.js';
 import { normalizeExchange, resolveSymbols, isUsExchange } from '../lib/symbols.js';
@@ -38,6 +39,7 @@ export async function labelLlm(article, entry, ctx = {}) {
     publishedDate: article.publishedDate,
     promptVersion: PROMPT_VERSION,
     prefilter: null,
+    noticeRule: null, // D71: set when the law-firm notice rule labelled the article (what matched)
     classifyInput: null,
     classify: null,
     extract: null,
@@ -74,6 +76,12 @@ export async function labelLlm(article, entry, ctx = {}) {
   if (!trace.prefilter.pass) {
     setSymbols(null);
     return others('pre-filter: no earnings/dividend/split/IPO vocabulary, no LLM call');
+  }
+  trace.noticeRule = lawFirmNotice(article);
+  if (trace.noticeRule) {
+    setSymbols(null);
+    const { litigation, firm, firmIn } = trace.noticeRule;
+    return others(`rule: ${NOTICE_RULE} (title "${litigation}", firm "${firm}" in the ${firmIn}), no LLM call`);
   }
 
   // ---- 1. Classify: the top of the body is enough to tell what the article is about.

@@ -92,6 +92,21 @@ test('fullText null → others, no LLM call', async () => {
   assert.equal(calls.length, 0);
 });
 
+test('law-firm class-action notice → others by rule, no LLM call, traced (D71)', async () => {
+  const { call, calls } = fakeLlm({});
+  const notice = {
+    ...article,
+    title: 'Kaplan Fox Reminds Fervo Energy Company (FRVO) Investors with Significant Losses to Seek a Leadership Role Before Deadline in Securities Class Action',
+    fullText: 'NEW YORK, Nov. 24, 2026 -- Kaplan Fox & Kilsheimer LLP reminds investors who bought in the IPO of a pending lawsuit.\n\nThe quarterly results disappointed.',
+  };
+  const r = await labelLlm(notice, entry, { call });
+  assert.deepEqual(r.labels, ['others']);
+  assert.equal(calls.length, 0);
+  assert.equal(r.trace.prefilter.pass, true); // the notice has IPO/results vocabulary; the rule stops it
+  assert.deepEqual(r.trace.noticeRule, { rule: 'law-firm class-action notice', litigation: 'Class Action', firm: 'LLP', firmIn: 'opening' });
+  assert.match(r.trace.result.why, /^rule: law-firm class-action notice/);
+});
+
 test('earnings: values proven and converted; D12 picks GAAP diluted; a hallucinated sentence → null', async () => {
   const { call, calls } = fakeLlm({
     classify: {

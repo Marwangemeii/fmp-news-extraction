@@ -9,7 +9,7 @@ import { canonicalizeUrl } from './lib/url.js';
 import { isInWindow } from './lib/window.js';
 import { typeOf } from './lib/type.js';
 import { toSources, discoverPages, listDateOf } from './lib/paging.js';
-import { cached } from './lib/cache.js';
+import { cached, readCache } from './lib/cache.js';
 import { createLimiter } from './lib/pool.js';
 import { BLOCKED_STATUSES } from './lib/blocked.js';
 import { LLM_CONCURRENCY } from './llm/config.js';
@@ -130,6 +130,7 @@ export function newLlmStats() {
   return {
     prefilterPassed: 0,
     prefilterSkipped: 0, // no vocabulary, or no fullText: labelled others with no LLM call
+    noticeRule: 0, // passed the pre-filter, then labelled others by the law-firm notice rule (D71), no LLM call
     calls: 0, // billed calls this run
     cacheHits: 0,
     inputTokens: 0,
@@ -148,7 +149,8 @@ export function newLlmStats() {
 /** Adds one article's trace to the LLM stats. */
 function countTrace(llm, trace) {
   if (!trace) return;
-  if (trace.classify) llm.prefilterPassed++;
+  if (trace.noticeRule) llm.noticeRule++;
+  else if (trace.classify) llm.prefilterPassed++;
   else llm.prefilterSkipped++;
   for (const call of trace.calls ?? []) {
     if (call.fromCache) llm.cacheHits++;
@@ -255,9 +257,14 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
   for (const item of todo) {
     let article;
     let nullReason = null; // why fullText is null, if it is (D31)
-    if (blockedInARow >= BLOCKED_IN_A_ROW) {
-      // Circuit breaker (D61): the site is refusing us; asking for the rest would only add load.
-      // The article is still written from list data, like any blocked one.
+    // Circuit breaker (D61): the site is refusing us; asking for the rest would only add load.
+    // A page already in the dev cache is not a request, so it is still used.
+    const fromDisk = blockedInARow >= BLOCKED_IN_A_ROW && cache ? await readCache(item.url, cacheCounter) : null;
+    if (fromDisk) {
+      article = extract(fromDisk.body, item, entry, fromDisk.url);
+      if (article.fullText === null) nullReason = 'noBody';
+    } else if (blockedInARow >= BLOCKED_IN_A_ROW) {
+      // Not cached: written from list data, like any blocked article.
       nullReason = 'blocked';
       s.notFetchedAfterBlocks++;
       article = extract('', item, entry, item.url);
@@ -348,6 +355,7 @@ async function runPublisher(entry, { registry, window, limit, sample, cache, see
   const l = s.llm;
   console.log(
     `[${entry.name}] labels ${JSON.stringify(s.labels)} · pre-filter passed ${l.prefilterPassed}/${articles.length}` +
+      `${l.noticeRule ? ` · law-firm notices (no LLM) ${l.noticeRule}` : ''}` +
       ` · LLM calls ${l.calls} (cached ${l.cacheHits}) · ${l.inputTokens} in / ${l.outputTokens} out · $${l.costUsd.toFixed(4)}` +
       ` · labels dropped: evidence (K4) ${l.labelsDropped}, not in opening (K11) ${l.labelsNotInOpening}, of ${l.labelsProposed}` +
       `${s.llmErrorUrls.length ? ` · LLM errors ${JSON.stringify(l.llmErrors)}` : ''}`,
